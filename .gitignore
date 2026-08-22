@@ -1,0 +1,6 @@
+# Lokal erzeugte, potenziell personenbezogene Diagnoseberichte
+reports/
+
+# PowerShell/Pester artefacts
+TestResults/
+*.clixml
