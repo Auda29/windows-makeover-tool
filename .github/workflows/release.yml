@@ -18,30 +18,43 @@ env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
-  test:
-    name: Test ${{ matrix.name }}
+  test-windows-powershell:
+    name: Test Windows PowerShell 5.1
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Windows PowerShell 5.1
-            shell: powershell
-          - name: PowerShell 7
-            shell: pwsh
-
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Install Pester 5.7.1
-        shell: ${{ matrix.shell }}
+        shell: powershell
         run: |
           Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
 
       - name: Run tests
-        shell: ${{ matrix.shell }}
+        shell: powershell
+        run: |
+          Import-Module Pester -RequiredVersion 5.7.1 -Force
+          $result = Invoke-Pester .\tests\WindowsMakeover.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) {
+              throw "$($result.FailedCount) Pester test(s) failed."
+          }
+
+  test-powershell:
+    name: Test PowerShell 7
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Install Pester 5.7.1
+        shell: pwsh
+        run: |
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Run tests
+        shell: pwsh
         run: |
           Import-Module Pester -RequiredVersion 5.7.1 -Force
           $result = Invoke-Pester .\tests\WindowsMakeover.Tests.ps1 -Output Detailed -PassThru
@@ -51,7 +64,9 @@ jobs:
 
   release:
     name: Build and publish release
-    needs: test
+    needs:
+      - test-windows-powershell
+      - test-powershell
     runs-on: windows-latest
     permissions:
       contents: write
