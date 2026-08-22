@@ -1,0 +1,38 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pester:
+    name: ${{ matrix.name }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows PowerShell 5.1
+            shell: powershell
+          - name: PowerShell 7
+            shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester 5.7.1
+        shell: ${{ matrix.shell }}
+        run: |
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Run tests
+        shell: ${{ matrix.shell }}
+        run: |
+          Import-Module Pester -RequiredVersion 5.7.1 -Force
+          $result = Invoke-Pester .\tests\WindowsMakeover.Tests.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) {
+              throw "$($result.FailedCount) Pester test(s) failed."
+          }

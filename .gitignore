@@ -4,3 +4,4 @@ reports/
 # PowerShell/Pester artefacts
 TestResults/
 *.clixml
+dist/
