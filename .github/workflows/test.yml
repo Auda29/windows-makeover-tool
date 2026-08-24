@@ -12,7 +12,7 @@ jobs:
     name: Windows PowerShell 5.1
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Pester 5.7.1
         shell: powershell
@@ -32,7 +32,7 @@ jobs:
     name: PowerShell 7
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Pester 5.7.1
         shell: pwsh

@@ -15,7 +15,7 @@ Describe 'New-WMDiagnosis' {
 
         $report = New-WMDiagnosis -Facts $facts
 
-        $report.SchemaVersion | Should -Be '1.3'
+        $report.SchemaVersion | Should -Be '1.4'
         $report.OverallHealth | Should -Be 'Critical'
         $report.Recommendations.Id | Should -Contain 'CleanTempFiles'
         $report.Recommendations.Id | Should -Contain 'FreeDiskSpace'
@@ -87,6 +87,37 @@ Describe 'New-WMDiagnosis' {
         $report.ManualPlaybook.Id | Should -Contain 'Recovery'
         ($report.ManualPlaybook | Where-Object Id -eq 'RepairSystemFiles').Steps -join ' ' | Should -Match 'sfc /scannow'
     }
+
+    It 'recommends review for large user folders, browser caches, and pending updates' {
+        $facts = [pscustomobject]@{
+            SystemDriveFreePercent  = 40
+            TempSizeBytes           = 0
+            RecycleBinSizeBytes     = 0
+            StartupApplicationCount = 0
+            UserFolderUsage         = [pscustomobject]@{
+                ProbeStatus = 'Available'
+                Folders = @([pscustomobject]@{ Name = 'Downloads'; TotalBytes = 15GB })
+            }
+            BrowserCacheUsage       = [pscustomobject]@{
+                ProbeStatus = 'Available'
+                TotalBytes = 2GB
+                Browsers = @([pscustomobject]@{ Name = 'Google Chrome'; TotalBytes = 2GB })
+            }
+            PendingUpdates          = [pscustomobject]@{
+                ProbeStatus = 'Available'
+                PendingCount = 3
+                SecurityUpdateCount = 2
+                RebootRequired = $true
+            }
+        }
+
+        $report = New-WMDiagnosis -Facts $facts
+
+        $report.SchemaVersion | Should -Be '1.4'
+        $report.Recommendations.Id | Should -Contain 'ReviewLargeUserFolders'
+        $report.Recommendations.Id | Should -Contain 'ReviewBrowserCaches'
+        $report.Recommendations.Id | Should -Contain 'InstallPendingWindowsUpdates'
+    }
 }
 
 Describe 'Get-WMWindowsLifecycle' {
@@ -104,7 +135,7 @@ Describe 'Get-WMWindowsLifecycle' {
 Describe 'Get-WMSafeRemediationPlan' {
     It 'marks temp cleanup as an individually confirmed action with a size estimate' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.3'
+            SchemaVersion = '1.4'
             Facts = [pscustomobject]@{ TempSizeBytes = 2GB; RecycleBinSizeBytes = 0 }
             Recommendations = @(
                 [pscustomobject]@{ Id = 'CleanTempFiles' }
@@ -123,7 +154,7 @@ Describe 'Get-WMSafeRemediationPlan' {
 
     It 'offers the Recycle Bin only as a confirmed low-risk action' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.3'
+            SchemaVersion = '1.4'
             Facts = [pscustomobject]@{ TempSizeBytes = 0; RecycleBinSizeBytes = 3GB }
             Recommendations = @(
                 [pscustomobject]@{ Id = 'CleanRecycleBin' }
@@ -146,7 +177,7 @@ Describe 'Get-WMSafeRemediationPlan' {
 
     It 'ignores injected action IDs below the size threshold' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.3'
+            SchemaVersion = '1.4'
             Facts = [pscustomobject]@{ TempSizeBytes = 0; RecycleBinSizeBytes = 0 }
             Recommendations = @(
                 [pscustomobject]@{ Id = 'CleanRecycleBin' }
@@ -160,7 +191,7 @@ Describe 'Get-WMSafeRemediationPlan' {
 Describe 'Test-WMDiagnosticReport' {
     It 'accepts a recent report from the same PC' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.3'
+            SchemaVersion = '1.4'
             GeneratedAt = [DateTimeOffset]::UtcNow.ToString('o')
             Facts = [pscustomobject]@{
                 ComputerName = 'FAMILY-PC'
@@ -176,7 +207,7 @@ Describe 'Test-WMDiagnosticReport' {
 
     It 'rejects an old or foreign report' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.3'
+            SchemaVersion = '1.4'
             GeneratedAt = [DateTimeOffset]::UtcNow.AddDays(-31).ToString('o')
             Facts = [pscustomobject]@{
                 ComputerName = 'OTHER-PC'
@@ -194,7 +225,7 @@ Describe 'Test-WMDiagnosticReport' {
 
     It 'rejects missing user binding and a future timestamp' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.3'
+            SchemaVersion = '1.4'
             GeneratedAt = [DateTimeOffset]::UtcNow.AddHours(1).ToString('o')
             Facts = [pscustomobject]@{
                 TempSizeBytes = 2GB
@@ -212,7 +243,7 @@ Describe 'Test-WMDiagnosticReport' {
 
     It 'rejects reports from another Windows user or temp scope' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.3'
+            SchemaVersion = '1.4'
             GeneratedAt = [DateTimeOffset]::UtcNow.ToString('o')
             Facts = [pscustomobject]@{
                 ComputerName = 'FAMILY-PC'
@@ -266,6 +297,41 @@ Describe 'Invoke-WMSafeRemediation' {
     It 'does not offer an arbitrary deletion path' {
         (Get-Command Invoke-WMSafeRemediation).Parameters.Keys | Should -Not -Contain 'TempPath'
     }
+
+    It 'targets each enumerated local fixed drive and does not use an unknown-count sentinel' {
+        $projectRoot = Split-Path -Path $PSScriptRoot -Parent
+        $moduleContent = Get-Content -LiteralPath (Join-Path $projectRoot 'src\WindowsMakeover.psm1') -Raw
+        $entryContent = Get-Content -LiteralPath (Join-Path $projectRoot 'windows-makeover.ps1') -Raw
+
+        $moduleContent | Should -Match 'Clear-RecycleBin -DriveLetter \$driveLetter'
+        $moduleContent | Should -Not -Match 'Removed\s*=\s*-1'
+        $moduleContent | Should -Match 'RemovedKnown\s*=\s*\$false'
+        $entryContent | Should -Match '\$driveLetters = @\(Get-WMLocalFixedDriveLetters\)'
+        $entryContent | Should -Not -Match 'Get-PSDrive -PSProvider FileSystem'
+    }
+
+    It 'removes empty nested temp directories but preserves the temp root' {
+        $tempRoot = Join-Path $TestDrive 'isolated-temp'
+        $firstFolder = Join-Path $tempRoot 'first'
+        $secondFolder = Join-Path $firstFolder 'second'
+        New-Item -ItemType Directory -Path $secondFolder -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $secondFolder 'remove-me.tmp') -Value 'test'
+
+        $originalTempPath = $env:TEMP
+        try {
+            $env:TEMP = $tempRoot
+            $result = Invoke-WMSafeRemediation -Id 'CleanTempFiles' -Confirm:$false
+        }
+        finally {
+            $env:TEMP = $originalTempPath
+        }
+
+        Test-Path -LiteralPath $tempRoot -PathType Container | Should -BeTrue
+        Test-Path -LiteralPath $firstFolder | Should -BeFalse
+        $result.Status | Should -Be 'Completed'
+        $result.Removed | Should -Be 1
+        $result.RemovedDirectories | Should -Be 2
+    }
 }
 
 Describe 'Get-WMSafePercentage' {
@@ -276,6 +342,140 @@ Describe 'Get-WMSafePercentage' {
     It 'returns no misleading value for a zero or negative denominator' {
         Get-WMSafePercentage -Numerator 25 -Denominator 0 | Should -BeNullOrEmpty
         Get-WMSafePercentage -Numerator 25 -Denominator (-1) | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Get-WMDirectoryUsage' {
+    It 'measures files recursively without changing the directory' {
+        $root = Join-Path $TestDrive 'usage'
+        $nested = Join-Path $root 'nested'
+        New-Item -ItemType Directory -Path $nested -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $root 'one.bin') -Value '123' -NoNewline
+        Set-Content -LiteralPath (Join-Path $nested 'two.bin') -Value '12345' -NoNewline
+
+        $usage = Get-WMDirectoryUsage -Path $root -Name 'Test'
+
+        $usage.ProbeStatus | Should -Be 'Available'
+        $usage.TotalBytes | Should -Be 8
+        $usage.FileCount | Should -Be 2
+        Test-Path -LiteralPath (Join-Path $nested 'two.bin') | Should -BeTrue
+    }
+
+    It 'returns unavailable for a missing directory instead of throwing' {
+        $usage = Get-WMDirectoryUsage -Path (Join-Path $TestDrive 'missing') -Name 'Missing'
+
+        $usage.ProbeStatus | Should -Be 'Unavailable'
+        $usage.TotalBytes | Should -Be 0
+        $usage.FileCount | Should -Be 0
+    }
+
+    It 'returns a partial result when the shared scan deadline has elapsed' {
+        $root = Join-Path $TestDrive 'timed'
+        New-Item -ItemType Directory -Path $root | Out-Null
+
+        $usage = Get-WMDirectoryUsage -Path $root -Name 'Timed' -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(-1))
+
+        $usage.ProbeStatus | Should -Be 'Partial'
+        $usage.TimedOut | Should -BeTrue
+    }
+}
+
+Describe 'Get-WMKnownUserFolderUsage' {
+    It 'sorts known folders by size and limits the returned list' {
+        $downloads = Join-Path $TestDrive 'Downloads'
+        $documents = Join-Path $TestDrive 'Documents'
+        $pictures = Join-Path $TestDrive 'Pictures'
+        New-Item -ItemType Directory -Path $downloads,$documents,$pictures -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $downloads 'large.bin') -Value ('x' * 30) -NoNewline
+        Set-Content -LiteralPath (Join-Path $documents 'medium.bin') -Value ('x' * 20) -NoNewline
+        Set-Content -LiteralPath (Join-Path $pictures 'small.bin') -Value ('x' * 10) -NoNewline
+
+        $result = Get-WMKnownUserFolderUsage -Folders ([ordered]@{
+            Downloads = $downloads
+            Documents = $documents
+            Pictures = $pictures
+        }) -Top 2
+
+        $result.ProbeStatus | Should -Be 'Available'
+        $result.Folders | Should -HaveCount 2
+        $result.Folders[0].Name | Should -Be 'Downloads'
+        $result.Folders[0].TotalBytes | Should -Be 30
+        $result.Folders[1].Name | Should -Be 'Documents'
+    }
+}
+
+Describe 'Get-WMBrowserCacheUsage' {
+    It 'measures Chrome, Edge, and Firefox cache profiles separately' {
+        $local = Join-Path $TestDrive 'Local'
+        $chromeCache = Join-Path $local 'Google\Chrome\User Data\Default\Cache'
+        $edgeCache = Join-Path $local 'Microsoft\Edge\User Data\Profile 1\Code Cache'
+        $firefoxCache = Join-Path $local 'Mozilla\Firefox\Profiles\abc.default\cache2'
+        New-Item -ItemType Directory -Path $chromeCache,$edgeCache,$firefoxCache -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $chromeCache 'chrome.bin') -Value ('x' * 11) -NoNewline
+        Set-Content -LiteralPath (Join-Path $edgeCache 'edge.bin') -Value ('x' * 13) -NoNewline
+        Set-Content -LiteralPath (Join-Path $firefoxCache 'firefox.bin') -Value ('x' * 17) -NoNewline
+
+        $result = Get-WMBrowserCacheUsage -LocalAppDataPath $local
+
+        $result.ProbeStatus | Should -Be 'Available'
+        ($result.Browsers | Where-Object Name -eq 'Google Chrome').TotalBytes | Should -Be 11
+        ($result.Browsers | Where-Object Name -eq 'Microsoft Edge').TotalBytes | Should -Be 13
+        ($result.Browsers | Where-Object Name -eq 'Mozilla Firefox').TotalBytes | Should -Be 17
+        $result.TotalBytes | Should -Be 41
+    }
+}
+
+Describe 'ConvertTo-WMPendingUpdateSummary' {
+    It 'summarizes pending, security, and restart-requiring updates' {
+        $updates = @(
+            [pscustomobject]@{ Title = 'Security fix'; RebootRequired = $true; CategoryNames = @('Security Updates') },
+            [pscustomobject]@{ Title = 'Driver update'; RebootRequired = $false; CategoryNames = @('Drivers') }
+        )
+
+        $summary = ConvertTo-WMPendingUpdateSummary -Updates $updates
+
+        $summary.ProbeStatus | Should -Be 'Available'
+        $summary.PendingCount | Should -Be 2
+        $summary.SecurityUpdateCount | Should -Be 1
+        $summary.RebootRequiredCount | Should -Be 1
+        $summary.RebootRequired | Should -BeTrue
+        $summary.Titles | Should -Contain 'Security fix'
+    }
+}
+
+Describe 'Get-WMProcessExitCode' {
+    It 'returns one for report validation failures' {
+        Get-WMProcessExitCode -ValidationFailed -Results @() | Should -Be 1
+    }
+
+    It 'returns two when an action fails or completes with warnings' {
+        Get-WMProcessExitCode -Results @([pscustomobject]@{ Status = 'Failed'; Failed = 1 }) | Should -Be 2
+        Get-WMProcessExitCode -Results @([pscustomobject]@{ Status = 'CompletedWithWarnings'; Failed = 1 }) | Should -Be 2
+    }
+
+    It 'returns zero when completed actions have no failures' {
+        Get-WMProcessExitCode -Results @(
+            [pscustomobject]@{ Status = 'Completed'; Failed = 0 },
+            [pscustomobject]@{ Status = 'WhatIf'; Failed = 0 }
+        ) | Should -Be 0
+    }
+}
+
+Describe 'Get-WMDefaultReportDirectory' {
+    It 'places reports under the user Documents directory' {
+        $directory = Get-WMDefaultReportDirectory -DocumentsPath $TestDrive
+
+        $directory | Should -Be (Join-Path (Join-Path $TestDrive 'WindowsMakeover') 'reports')
+    }
+}
+
+Describe 'Get-WMRunContextMessage' {
+    It 'clearly identifies a partial standard-user diagnosis' {
+        Get-WMRunContextMessage -IsAdministrator:$false | Should -Match 'Standard user.*partial'
+    }
+
+    It 'identifies an elevated diagnosis' {
+        Get-WMRunContextMessage -IsAdministrator:$true | Should -Match 'Administrator'
     }
 }
 
@@ -305,7 +505,7 @@ Describe 'Save-WMRemediationAuditEntry' {
 Describe 'Save-WMDiagnosticReport' {
     It 'saves a machine-readable diagnostic report as JSON' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.3'
+            SchemaVersion = '1.4'
             OverallHealth = 'Healthy'
             Recommendations = @()
         }
@@ -314,7 +514,7 @@ Describe 'Save-WMDiagnosticReport' {
         Save-WMDiagnosticReport -Report $report -Path $path
 
         $saved = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-        $saved.SchemaVersion | Should -Be '1.3'
+        $saved.SchemaVersion | Should -Be '1.4'
         $saved.OverallHealth | Should -Be 'Healthy'
     }
 }
@@ -325,7 +525,7 @@ Describe 'New-WMReleaseAssets' {
         $builderPath = Join-Path $projectRoot 'build\New-WMReleaseAssets.ps1'
         $outputPath = Join-Path $TestDrive 'release'
 
-        $assets = & $builderPath -Version '0.2.1' -OutputDirectory $outputPath
+        $assets = & $builderPath -Version '0.3.0' -OutputDirectory $outputPath
 
         Test-Path -LiteralPath $assets.StandaloneScript -PathType Leaf | Should -BeTrue
         Test-Path -LiteralPath $assets.ZipPackage -PathType Leaf | Should -BeTrue
@@ -352,8 +552,8 @@ Describe 'New-WMReleaseAssets' {
         Test-Path -LiteralPath (Join-Path $expandedPath 'README.md') -PathType Leaf | Should -BeTrue
 
         $checksums = Get-Content -LiteralPath $assets.Checksums -Raw
-        $checksums | Should -Match 'windows-makeover-0\.2\.1\.ps1'
-        $checksums | Should -Match 'windows-makeover-0\.2\.1\.zip'
+        $checksums | Should -Match 'windows-makeover-0\.3\.0\.ps1'
+        $checksums | Should -Match 'windows-makeover-0\.3\.0\.zip'
     }
 }
 
@@ -372,6 +572,37 @@ Describe 'windows-makeover entry point' {
         ) | Out-Null
 
         $errors | Should -BeNullOrEmpty
+    }
+
+    It 'uses English for all user-facing console labels' {
+        $projectRoot = Split-Path -Path $PSScriptRoot -Parent
+        $scriptContent = Get-Content -LiteralPath (Join-Path $projectRoot 'windows-makeover.ps1') -Raw
+
+        $scriptContent | Should -Match 'Overall status:'
+        $scriptContent | Should -Match 'I/O per second'
+        $scriptContent | Should -Match 'Diagnostic report saved:'
+        $scriptContent | Should -Match '\$reportDirectory = Get-WMDefaultReportDirectory'
+        $scriptContent | Should -Match 'Run context: \$\(Get-WMRunContextMessage'
+        $scriptContent | Should -Not -Match 'Gesamtstatus|Diagnosebericht|pro Sekunde'
+    }
+
+    It 'uses explicit process exit codes for validation and action errors' {
+        $projectRoot = Split-Path -Path $PSScriptRoot -Parent
+        $scriptContent = Get-Content -LiteralPath (Join-Path $projectRoot 'windows-makeover.ps1') -Raw
+
+        $scriptContent | Should -Match 'exit 1'
+        $scriptContent | Should -Match 'exit \$remediationExitCode'
+    }
+
+    It 'collects storage diagnostics and bounds the Windows Update probe with a timeout' {
+        $projectRoot = Split-Path -Path $PSScriptRoot -Parent
+        $scriptContent = Get-Content -LiteralPath (Join-Path $projectRoot 'windows-makeover.ps1') -Raw
+
+        $scriptContent | Should -Match 'UserFolderUsage\s*=\s*\$userFolderUsage'
+        $scriptContent | Should -Match 'BrowserCacheUsage\s*=\s*\$browserCacheUsage'
+        $scriptContent | Should -Match 'PendingUpdates\s*=\s*Get-WMPendingWindowsUpdates'
+        $scriptContent | Should -Match 'Wait-Job -Job \$job -Timeout \$TimeoutSeconds'
+        $scriptContent | Should -Match '\$storageDeadlineUtc = \[DateTimeOffset\]::UtcNow\.AddSeconds\(\$StorageTimeoutSeconds\)'
     }
 }
 

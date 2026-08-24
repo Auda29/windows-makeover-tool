@@ -1,6 +1,6 @@
 ﻿Set-StrictMode -Version Latest
 
-$script:WMReportSchemaVersion = '1.3'
+$script:WMReportSchemaVersion = '1.4'
 
 function Get-WMFactValue {
     [CmdletBinding()]
@@ -248,6 +248,271 @@ function Get-WMManualPlaybook {
     )
 }
 
+function Get-WMDirectoryUsage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Name,
+        [DateTimeOffset]$DeadlineUtc = [DateTimeOffset]::MaxValue
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return [pscustomobject]@{
+            Name                 = $Name
+            Path                 = $Path
+            ProbeStatus          = 'Unavailable'
+            TotalBytes           = [int64]0
+            FileCount            = 0
+            SkippedReparsePoints = 0
+            ErrorCount           = 0
+            TimedOut             = $false
+        }
+    }
+
+    try {
+        $rootItem = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    }
+    catch {
+        return [pscustomobject]@{
+            Name = $Name; Path = $Path; ProbeStatus = 'Unavailable'; TotalBytes = [int64]0
+            FileCount = 0; SkippedReparsePoints = 0; ErrorCount = 1; TimedOut = $false; Error = $_.Exception.Message
+        }
+    }
+    $rootIsReparsePoint = ([int]$rootItem.Attributes -band [int][System.IO.FileAttributes]::ReparsePoint) -ne 0
+    if ($rootIsReparsePoint) {
+        return [pscustomobject]@{
+            Name = $Name; Path = $rootItem.FullName; ProbeStatus = 'Partial'; TotalBytes = [int64]0
+            FileCount = 0; SkippedReparsePoints = 1; ErrorCount = 0; TimedOut = $false
+        }
+    }
+
+    $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    $directories = [System.Collections.Generic.Stack[string]]::new()
+    $directories.Push($resolvedPath)
+    $totalBytes = [int64]0
+    $fileCount = 0
+    $skippedReparsePoints = 0
+    $errorCount = 0
+    $timedOut = $false
+
+    while ($directories.Count -gt 0 -and -not $timedOut) {
+        if ([DateTimeOffset]::UtcNow -ge $DeadlineUtc) {
+            $timedOut = $true
+            break
+        }
+        $directoryPath = $directories.Pop()
+        try {
+            $items = @(Get-ChildItem -LiteralPath $directoryPath -Force -ErrorAction Stop)
+        }
+        catch {
+            $errorCount++
+            continue
+        }
+
+        foreach ($item in $items) {
+            if ([DateTimeOffset]::UtcNow -ge $DeadlineUtc) {
+                $timedOut = $true
+                break
+            }
+            $isReparsePoint = ([int]$item.Attributes -band [int][System.IO.FileAttributes]::ReparsePoint) -ne 0
+            if ($item.PSIsContainer) {
+                if ($isReparsePoint) {
+                    $skippedReparsePoints++
+                }
+                else {
+                    $directories.Push($item.FullName)
+                }
+                continue
+            }
+
+            try {
+                $totalBytes += [int64]$item.Length
+                $fileCount++
+            }
+            catch {
+                $errorCount++
+            }
+        }
+    }
+
+    [pscustomobject]@{
+        Name                 = $Name
+        Path                 = $resolvedPath
+        ProbeStatus          = if ($errorCount -eq 0 -and -not $timedOut) { 'Available' } else { 'Partial' }
+        TotalBytes           = $totalBytes
+        FileCount            = $fileCount
+        SkippedReparsePoints = $skippedReparsePoints
+        ErrorCount           = $errorCount
+        TimedOut             = $timedOut
+    }
+}
+
+function Get-WMKnownUserFolderUsage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Folders,
+        [ValidateRange(1, 20)][int]$Top = 5,
+        [DateTimeOffset]$DeadlineUtc = [DateTimeOffset]::MaxValue
+    )
+
+    $measurements = [System.Collections.Generic.List[object]]::new()
+    $unavailableCount = 0
+    foreach ($entry in $Folders.GetEnumerator()) {
+        $usage = Get-WMDirectoryUsage -Path ([string]$entry.Value) -Name ([string]$entry.Key) -DeadlineUtc $DeadlineUtc
+        if ($usage.ProbeStatus -eq 'Unavailable') {
+            $unavailableCount++
+        }
+        else {
+            $measurements.Add($usage)
+        }
+    }
+
+    $orderedFolders = @($measurements | Sort-Object -Property TotalBytes -Descending | Select-Object -First $Top)
+    $errorCount = [int](($measurements | Measure-Object -Property ErrorCount -Sum).Sum)
+    $partialCount = @($measurements | Where-Object { $_.ProbeStatus -eq 'Partial' }).Count
+    [pscustomobject]@{
+        ProbeStatus     = if ($measurements.Count -eq 0) { 'Unavailable' } elseif ($errorCount -gt 0 -or $unavailableCount -gt 0 -or $partialCount -gt 0) { 'Partial' } else { 'Available' }
+        Folders         = $orderedFolders
+        MeasuredCount   = $measurements.Count
+        UnavailableCount = $unavailableCount
+        TotalBytes      = [int64](($measurements | Measure-Object -Property TotalBytes -Sum).Sum)
+        ErrorCount      = $errorCount
+    }
+}
+
+function Join-WMPathParts {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string[]]$Parts
+    )
+
+    $result = $Root
+    foreach ($part in $Parts) {
+        $result = Join-Path $result $part
+    }
+    return $result
+}
+
+function Get-WMChromiumCacheUsage {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$UserDataPath,
+        [DateTimeOffset]$DeadlineUtc = [DateTimeOffset]::MaxValue
+    )
+
+    if (-not (Test-Path -LiteralPath $UserDataPath -PathType Container)) {
+        return [pscustomobject]@{ Name = $Name; ProbeStatus = 'Unavailable'; TotalBytes = [int64]0; FileCount = 0; ProfileCount = 0; ErrorCount = 0 }
+    }
+
+    $profiles = @(
+        Get-ChildItem -LiteralPath $UserDataPath -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object {
+                (([int]$_.Attributes -band [int][System.IO.FileAttributes]::ReparsePoint) -eq 0) -and
+                ($_.Name -eq 'Default' -or $_.Name -eq 'Guest Profile' -or $_.Name -like 'Profile *')
+            }
+    )
+    $totalBytes = [int64]0
+    $fileCount = 0
+    $errorCount = 0
+    $timedOut = $false
+    foreach ($browserProfile in $profiles) {
+        foreach ($cacheParts in @(@('Cache'), @('Code Cache'), @('GPUCache'))) {
+            $cachePath = Join-WMPathParts -Root $browserProfile.FullName -Parts $cacheParts
+            if (-not (Test-Path -LiteralPath $cachePath -PathType Container)) { continue }
+            $usage = Get-WMDirectoryUsage -Path $cachePath -Name $Name -DeadlineUtc $DeadlineUtc
+            $totalBytes += [int64]$usage.TotalBytes
+            $fileCount += [int]$usage.FileCount
+            $errorCount += [int]$usage.ErrorCount
+            if ([bool]$usage.TimedOut) { $timedOut = $true }
+        }
+    }
+
+    [pscustomobject]@{
+        Name        = $Name
+        ProbeStatus = if ($errorCount -eq 0 -and -not $timedOut) { 'Available' } else { 'Partial' }
+        TotalBytes  = $totalBytes
+        FileCount   = $fileCount
+        ProfileCount = $profiles.Count
+        ErrorCount  = $errorCount
+    }
+}
+
+function Get-WMBrowserCacheUsage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$LocalAppDataPath,
+        [DateTimeOffset]$DeadlineUtc = [DateTimeOffset]::MaxValue
+    )
+
+    $chromeUserData = Join-WMPathParts -Root $LocalAppDataPath -Parts @('Google', 'Chrome', 'User Data')
+    $edgeUserData = Join-WMPathParts -Root $LocalAppDataPath -Parts @('Microsoft', 'Edge', 'User Data')
+    $firefoxProfiles = Join-WMPathParts -Root $LocalAppDataPath -Parts @('Mozilla', 'Firefox', 'Profiles')
+
+    $browsers = [System.Collections.Generic.List[object]]::new()
+    $browsers.Add((Get-WMChromiumCacheUsage -Name 'Google Chrome' -UserDataPath $chromeUserData -DeadlineUtc $DeadlineUtc))
+    $browsers.Add((Get-WMChromiumCacheUsage -Name 'Microsoft Edge' -UserDataPath $edgeUserData -DeadlineUtc $DeadlineUtc))
+
+    if (Test-Path -LiteralPath $firefoxProfiles -PathType Container) {
+        $profiles = @(Get-ChildItem -LiteralPath $firefoxProfiles -Directory -Force -ErrorAction SilentlyContinue | Where-Object { (([int]$_.Attributes -band [int][System.IO.FileAttributes]::ReparsePoint) -eq 0) })
+        $firefoxBytes = [int64]0
+        $firefoxFiles = 0
+        $firefoxErrors = 0
+        $firefoxTimedOut = $false
+        foreach ($browserProfile in $profiles) {
+            $cachePath = Join-Path $browserProfile.FullName 'cache2'
+            if (-not (Test-Path -LiteralPath $cachePath -PathType Container)) { continue }
+            $usage = Get-WMDirectoryUsage -Path $cachePath -Name 'Mozilla Firefox' -DeadlineUtc $DeadlineUtc
+            $firefoxBytes += [int64]$usage.TotalBytes
+            $firefoxFiles += [int]$usage.FileCount
+            $firefoxErrors += [int]$usage.ErrorCount
+            if ([bool]$usage.TimedOut) { $firefoxTimedOut = $true }
+        }
+        $browsers.Add([pscustomobject]@{
+            Name = 'Mozilla Firefox'; ProbeStatus = if ($firefoxErrors -eq 0 -and -not $firefoxTimedOut) { 'Available' } else { 'Partial' }
+            TotalBytes = $firefoxBytes; FileCount = $firefoxFiles; ProfileCount = $profiles.Count; ErrorCount = $firefoxErrors
+        })
+    }
+    else {
+        $browsers.Add([pscustomobject]@{ Name = 'Mozilla Firefox'; ProbeStatus = 'Unavailable'; TotalBytes = [int64]0; FileCount = 0; ProfileCount = 0; ErrorCount = 0 })
+    }
+
+    $availableBrowsers = @($browsers | Where-Object { $_.ProbeStatus -ne 'Unavailable' })
+    $totalErrors = [int](($availableBrowsers | Measure-Object -Property ErrorCount -Sum).Sum)
+    $partialBrowserCount = @($availableBrowsers | Where-Object { $_.ProbeStatus -eq 'Partial' }).Count
+    [pscustomobject]@{
+        ProbeStatus = if ($availableBrowsers.Count -eq 0) { 'Unavailable' } elseif ($totalErrors -gt 0 -or $partialBrowserCount -gt 0) { 'Partial' } else { 'Available' }
+        Browsers     = $browsers.ToArray()
+        TotalBytes   = [int64](($availableBrowsers | Measure-Object -Property TotalBytes -Sum).Sum)
+        FileCount    = [int](($availableBrowsers | Measure-Object -Property FileCount -Sum).Sum)
+        ErrorCount   = $totalErrors
+    }
+}
+
+function ConvertTo-WMPendingUpdateSummary {
+    [CmdletBinding()]
+    param([object[]]$Updates = @())
+
+    $securityCount = 0
+    $rebootCount = 0
+    $titles = [System.Collections.Generic.List[string]]::new()
+    foreach ($update in @($Updates)) {
+        $title = [string](Get-WMFactValue -Facts $update -Name 'Title' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($title)) { $titles.Add($title) }
+        if ([bool](Get-WMFactValue -Facts $update -Name 'RebootRequired' -Default $false)) { $rebootCount++ }
+        $categories = @(Get-WMFactValue -Facts $update -Name 'CategoryNames' -Default @())
+        if (@($categories | Where-Object { [string]$_ -match '(?i)Security|Critical' }).Count -gt 0) { $securityCount++ }
+    }
+
+    [pscustomobject]@{
+        ProbeStatus        = 'Available'
+        PendingCount       = @($Updates).Count
+        SecurityUpdateCount = $securityCount
+        RebootRequiredCount = $rebootCount
+        RebootRequired     = $rebootCount -gt 0
+        Titles             = $titles.ToArray()
+    }
+}
+
 function New-WMDiagnosis {
     [CmdletBinding()]
     param(
@@ -268,6 +533,9 @@ function New-WMDiagnosis {
     $antivirus = Get-WMFactValue -Facts $Facts -Name 'Antivirus' -Default ([pscustomobject]@{})
     $updates = Get-WMFactValue -Facts $Facts -Name 'Updates' -Default ([pscustomobject]@{})
     $powerPlan = Get-WMFactValue -Facts $Facts -Name 'ActivePowerPlan' -Default ([pscustomobject]@{})
+    $userFolderUsage = Get-WMFactValue -Facts $Facts -Name 'UserFolderUsage' -Default ([pscustomobject]@{})
+    $browserCacheUsage = Get-WMFactValue -Facts $Facts -Name 'BrowserCacheUsage' -Default ([pscustomobject]@{})
+    $pendingUpdates = Get-WMFactValue -Facts $Facts -Name 'PendingUpdates' -Default ([pscustomobject]@{})
 
     if ($freePercent -lt 10) {
         $recommendations.Add((New-WMRecommendation -Id 'FreeDiskSpace' -Severity 'High' -Title 'Critically low free space on the system drive' -Description "Only $freePercent% free space is available. Delete large unneeded files or move them to external storage." -ActionType 'Guidance'))
@@ -359,6 +627,24 @@ function New-WMDiagnosis {
     $powerPlanGuid = [string](Get-WMFactValue -Facts $powerPlan -Name 'Guid' -Default '')
     if ($powerPlanStatus -in @('Available', 'Partial') -and $powerPlanGuid -eq 'a1841308-3541-4fab-bc81-f71556f20b4a') {
         $recommendations.Add((New-WMRecommendation -Id 'ReviewPowerPlan' -Severity 'Low' -Title 'Power Saver plan is active' -Description 'If the PC is unexpectedly slow while plugged in, review the power mode. A higher-performance mode increases power use and heat.' -ActionType 'Guidance'))
+    }
+
+    $largestUserFolder = @(Get-WMFactValue -Facts $userFolderUsage -Name 'Folders' -Default @() | Sort-Object -Property TotalBytes -Descending | Select-Object -First 1)
+    if ($largestUserFolder.Count -gt 0 -and [int64]$largestUserFolder[0].TotalBytes -ge 10GB) {
+        $recommendations.Add((New-WMRecommendation -Id 'ReviewLargeUserFolders' -Severity 'Low' -Title 'A known user folder uses substantial disk space' -Description "The largest measured folder is $($largestUserFolder[0].Name) at $([math]::Round([double]$largestUserFolder[0].TotalBytes / 1GB, 1)) GB. Review large personal files manually; Windows Makeover will not delete them." -ActionType 'Guidance'))
+    }
+
+    $browserCacheBytes = [int64](Get-WMFactValue -Facts $browserCacheUsage -Name 'TotalBytes' -Default 0)
+    if ($browserCacheBytes -ge 1GB) {
+        $recommendations.Add((New-WMRecommendation -Id 'ReviewBrowserCaches' -Severity 'Low' -Title 'Browser caches use substantial disk space' -Description "Measured browser caches use $([math]::Round([double]$browserCacheBytes / 1GB, 1)) GB. Use each browser's own settings to clear caches if appropriate." -ActionType 'Guidance'))
+    }
+
+    $pendingUpdateStatus = [string](Get-WMFactValue -Facts $pendingUpdates -Name 'ProbeStatus' -Default 'Unavailable')
+    $pendingUpdateCount = [int](Get-WMFactValue -Facts $pendingUpdates -Name 'PendingCount' -Default 0)
+    if ($pendingUpdateStatus -eq 'Available' -and $pendingUpdateCount -gt 0) {
+        $securityUpdateCount = [int](Get-WMFactValue -Facts $pendingUpdates -Name 'SecurityUpdateCount' -Default 0)
+        $pendingReboot = [bool](Get-WMFactValue -Facts $pendingUpdates -Name 'RebootRequired' -Default $false)
+        $recommendations.Add((New-WMRecommendation -Id 'InstallPendingWindowsUpdates' -Severity 'Medium' -Title 'Windows Update reports pending updates' -Description "$pendingUpdateCount pending updates were found, including $securityUpdateCount security or critical updates. Reboot required: $pendingReboot. Review and install them through Windows Update." -ActionType 'Guidance'))
     }
 
     $overallHealth = 'Healthy'
@@ -514,6 +800,18 @@ function Test-WMDiagnosticReport {
     }
 }
 
+function Get-WMLocalFixedDriveLetters {
+    [CmdletBinding()]
+    param()
+
+    @(
+        Get-CimInstance -ClassName Win32_LogicalDisk -Filter 'DriveType = 3' -ErrorAction Stop |
+            ForEach-Object { ([string]$_.DeviceID).TrimEnd(':') } |
+            Where-Object { $_ -match '^[A-Za-z]$' } |
+            Sort-Object -Unique
+    )
+}
+
 function Invoke-WMSafeRemediation {
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     param(
@@ -523,16 +821,70 @@ function Invoke-WMSafeRemediation {
     )
 
     if ($Id -eq 'CleanRecycleBin') {
-        $operation = 'Empties the Recycle Bin on local drives'
-        if (-not $PSCmdlet.ShouldProcess("current user's Recycle Bin", $operation)) {
-            return [pscustomobject]@{ ActionId = $Id; Status = 'WhatIf'; Removed = 0; Failed = 0 }
-        }
         try {
-            Clear-RecycleBin -Force -ErrorAction Stop
-            return [pscustomobject]@{ ActionId = $Id; Status = 'Completed'; Removed = -1; Failed = 0 }
+            $driveLetters = @(Get-WMLocalFixedDriveLetters)
         }
         catch {
-            return [pscustomobject]@{ ActionId = $Id; Status = 'Failed'; Removed = 0; Failed = 1; Error = $_.Exception.Message }
+            return [pscustomobject]@{
+                ActionId          = $Id
+                Status            = 'Failed'
+                Removed           = $null
+                RemovedKnown      = $false
+                RemovedDirectories = 0
+                Failed            = 1
+                AffectedDrives    = @()
+                Error             = "Local fixed drives could not be enumerated: $($_.Exception.Message)"
+            }
+        }
+
+        if ($driveLetters.Count -eq 0) {
+            return [pscustomobject]@{
+                ActionId          = $Id
+                Status            = 'Failed'
+                Removed           = $null
+                RemovedKnown      = $false
+                RemovedDirectories = 0
+                Failed            = 1
+                AffectedDrives    = @()
+                Error             = 'No local fixed drives were found.'
+            }
+        }
+
+        $target = "current user's Recycle Bin on local fixed drives: $($driveLetters -join ', ')"
+        $operation = 'Empties the Recycle Bin on each selected local fixed drive'
+        if (-not $PSCmdlet.ShouldProcess($target, $operation)) {
+            return [pscustomobject]@{
+                ActionId          = $Id
+                Status            = 'WhatIf'
+                Removed           = $null
+                RemovedKnown      = $false
+                RemovedDirectories = 0
+                Failed            = 0
+                AffectedDrives    = $driveLetters
+            }
+        }
+
+        $failed = 0
+        $errors = [System.Collections.Generic.List[string]]::new()
+        foreach ($driveLetter in $driveLetters) {
+            try {
+                Clear-RecycleBin -DriveLetter $driveLetter -Force -ErrorAction Stop
+            }
+            catch {
+                $failed++
+                $errors.Add("$driveLetter`: $($_.Exception.Message)")
+            }
+        }
+
+        return [pscustomobject]@{
+            ActionId          = $Id
+            Status            = if ($failed -eq 0) { 'Completed' } elseif ($failed -lt $driveLetters.Count) { 'CompletedWithWarnings' } else { 'Failed' }
+            Removed           = $null
+            RemovedKnown      = $false
+            RemovedDirectories = 0
+            Failed            = $failed
+            AffectedDrives    = $driveLetters
+            Error             = if ($errors.Count -gt 0) { $errors -join ' | ' } else { $null }
         }
     }
 
@@ -550,9 +902,11 @@ function Invoke-WMSafeRemediation {
         return [pscustomobject]@{
             ActionId = $Id
             Status   = 'WhatIf'
-            Removed  = 0
-            Failed   = 0
-            Preview   = $preview
+            Removed            = 0
+            RemovedKnown       = $true
+            RemovedDirectories = 0
+            Failed             = 0
+            Preview            = $preview
         }
     }
 
@@ -569,12 +923,32 @@ function Invoke-WMSafeRemediation {
         }
     }
 
+    $removedDirectories = 0
+    $directories = @(
+        Get-ChildItem -LiteralPath $tempPath -Directory -Force -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object { $_.FullName.Length } -Descending
+    )
+    foreach ($directory in $directories) {
+        try {
+            $remainingItem = Get-ChildItem -LiteralPath $directory.FullName -Force -ErrorAction Stop | Select-Object -First 1
+            if ($null -eq $remainingItem) {
+                Remove-Item -LiteralPath $directory.FullName -Force -ErrorAction Stop
+                $removedDirectories++
+            }
+        }
+        catch {
+            $failed++
+        }
+    }
+
     [pscustomobject]@{
-        ActionId = $Id
-        Status   = if ($failed -eq 0) { 'Completed' } else { 'CompletedWithWarnings' }
-        Removed  = $removed
-        Failed   = $failed
-        Preview  = $preview
+        ActionId          = $Id
+        Status            = if ($failed -eq 0) { 'Completed' } else { 'CompletedWithWarnings' }
+        Removed           = $removed
+        RemovedKnown      = $true
+        RemovedDirectories = $removedDirectories
+        Failed            = $failed
+        Preview           = $preview
     }
 }
 
@@ -591,6 +965,57 @@ function Get-WMSafePercentage {
     }
 
     return [math]::Round(($Numerator / $Denominator) * 100, $Decimals)
+}
+
+function Get-WMProcessExitCode {
+    [CmdletBinding()]
+    param(
+        [object[]]$Results = @(),
+        [switch]$ValidationFailed
+    )
+
+    if ($ValidationFailed) {
+        return 1
+    }
+
+    foreach ($result in @($Results)) {
+        $status = [string](Get-WMFactValue -Facts $result -Name 'Status' -Default '')
+        $failed = [int](Get-WMFactValue -Facts $result -Name 'Failed' -Default 0)
+        if ($status -in @('Failed', 'CompletedWithWarnings') -or $failed -gt 0) {
+            return 2
+        }
+    }
+
+    return 0
+}
+
+function Get-WMDefaultReportDirectory {
+    [CmdletBinding()]
+    param(
+        [string]$DocumentsPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DocumentsPath)) {
+        if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+            throw 'The current user Documents directory could not be resolved.'
+        }
+        $DocumentsPath = Join-Path $env:USERPROFILE 'Documents'
+    }
+
+    return (Join-Path (Join-Path $DocumentsPath 'WindowsMakeover') 'reports')
+}
+
+function Get-WMRunContextMessage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][bool]$IsAdministrator
+    )
+
+    if ($IsAdministrator) {
+        return 'Administrator (elevated diagnosis)'
+    }
+
+    return 'Standard user (partial results are possible for protected probes)'
 }
 
 function Save-WMRemediationAuditEntry {
@@ -613,7 +1038,10 @@ function Save-WMRemediationAuditEntry {
         ActionId           = [string](Get-WMFactValue -Facts $Result -Name 'ActionId' -Default '')
         Status             = [string](Get-WMFactValue -Facts $Result -Name 'Status' -Default 'Unknown')
         Removed            = Get-WMFactValue -Facts $Result -Name 'Removed' -Default $null
+        RemovedKnown       = [bool](Get-WMFactValue -Facts $Result -Name 'RemovedKnown' -Default $false)
+        RemovedDirectories = [int](Get-WMFactValue -Facts $Result -Name 'RemovedDirectories' -Default 0)
         Failed             = Get-WMFactValue -Facts $Result -Name 'Failed' -Default $null
+        AffectedDrives     = @(Get-WMFactValue -Facts $Result -Name 'AffectedDrives' -Default @())
         IsWhatIf           = ([string](Get-WMFactValue -Facts $Result -Name 'Status' -Default '')) -eq 'WhatIf'
         Error              = Get-WMFactValue -Facts $Result -Name 'Error' -Default $null
     }
@@ -638,4 +1066,4 @@ function Save-WMDiagnosticReport {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
-Export-ModuleMember -Function Get-WMWindowsLifecycle, New-WMDiagnosis, Get-WMCleanupPreview, Get-WMSafeRemediationPlan, Test-WMDiagnosticReport, Invoke-WMSafeRemediation, Get-WMSafePercentage, Save-WMRemediationAuditEntry, Save-WMDiagnosticReport
+Export-ModuleMember -Function Get-WMWindowsLifecycle, New-WMDiagnosis, Get-WMDirectoryUsage, Get-WMKnownUserFolderUsage, Get-WMBrowserCacheUsage, ConvertTo-WMPendingUpdateSummary, Get-WMCleanupPreview, Get-WMSafeRemediationPlan, Test-WMDiagnosticReport, Get-WMLocalFixedDriveLetters, Invoke-WMSafeRemediation, Get-WMSafePercentage, Get-WMProcessExitCode, Get-WMDefaultReportDirectory, Get-WMRunContextMessage, Save-WMRemediationAuditEntry, Save-WMDiagnosticReport

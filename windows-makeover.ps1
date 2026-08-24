@@ -21,12 +21,18 @@ param(
     [ValidateRange(0, 60)]
     [int]$SampleSeconds = 5,
 
+    [ValidateRange(5, 120)]
+    [int]$UpdateTimeoutSeconds = 30,
+
+    [ValidateRange(5, 300)]
+    [int]$StorageTimeoutSeconds = 45,
+
     [switch]$Force
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:WMToolVersion = '0.2.1'
+$script:WMToolVersion = '0.3.0'
 
 $modulePath = Join-Path $PSScriptRoot 'src\WindowsMakeover.psm1'
 Import-Module $modulePath -Force
@@ -64,10 +70,11 @@ function Test-WMAdministrator {
 function Get-WMRecycleBinSize {
     $size = [Int64]0
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $drives = @(Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -match '^[A-Za-z]:\\$' })
+    $driveLetters = @(Get-WMLocalFixedDriveLetters)
 
-    foreach ($drive in $drives) {
-        $recyclePath = Join-Path -Path $drive.Root -ChildPath (Join-Path -Path '$Recycle.Bin' -ChildPath $sid)
+    foreach ($driveLetter in $driveLetters) {
+        $driveRoot = "${driveLetter}:\"
+        $recyclePath = Join-Path -Path $driveRoot -ChildPath (Join-Path -Path '$Recycle.Bin' -ChildPath $sid)
         if (-not (Test-Path -LiteralPath $recyclePath -PathType Container)) {
             continue
         }
@@ -392,8 +399,105 @@ function Get-WMActivePowerPlan {
     }
 }
 
+function Get-WMKnownUserFolderMap {
+    $folders = [ordered]@{}
+    $candidates = [ordered]@{
+        Downloads = if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { $null } else { Join-Path $env:USERPROFILE 'Downloads' }
+        Desktop   = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+        Documents = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
+        Pictures  = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyPictures)
+        Videos    = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyVideos)
+        Music     = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyMusic)
+    }
+    $seenPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in $candidates.GetEnumerator()) {
+        $path = [string]$entry.Value
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        $normalized = [System.IO.Path]::GetFullPath($path)
+        if ($seenPaths.Add($normalized)) {
+            $folders[$entry.Key] = $normalized
+        }
+    }
+    return $folders
+}
+
+function Get-WMPendingWindowsUpdates {
+    [CmdletBinding()]
+    param([ValidateRange(5, 120)][int]$TimeoutSeconds = 30)
+
+    $job = $null
+    try {
+        $job = Start-Job -ScriptBlock {
+            try {
+                $session = New-Object -ComObject 'Microsoft.Update.Session'
+                $searcher = $session.CreateUpdateSearcher()
+                $searchResult = $searcher.Search('IsInstalled=0 and IsHidden=0')
+                $updates = @(
+                    for ($index = 0; $index -lt $searchResult.Updates.Count; $index++) {
+                        $update = $searchResult.Updates.Item($index)
+                        $categoryNames = @(
+                            for ($categoryIndex = 0; $categoryIndex -lt $update.Categories.Count; $categoryIndex++) {
+                                [string]$update.Categories.Item($categoryIndex).Name
+                            }
+                        )
+                        [pscustomobject]@{
+                            Title           = [string]$update.Title
+                            RebootRequired  = [bool]$update.RebootRequired
+                            CategoryNames   = $categoryNames
+                        }
+                    }
+                )
+                [pscustomobject]@{ Success = $true; Updates = $updates; Error = $null }
+            }
+            catch {
+                [pscustomobject]@{ Success = $false; Updates = @(); Error = $_.Exception.Message }
+            }
+        }
+
+        $completedJob = Wait-Job -Job $job -Timeout $TimeoutSeconds
+        if ($null -eq $completedJob) {
+            Stop-Job -Job $job -ErrorAction SilentlyContinue
+            return [pscustomobject]@{
+                ProbeStatus = 'TimedOut'; PendingCount = $null; SecurityUpdateCount = $null
+                RebootRequiredCount = $null; RebootRequired = $null; Titles = @()
+                TimeoutSeconds = $TimeoutSeconds; Error = 'Windows Update search timed out.'
+            }
+        }
+
+        $payload = Receive-Job -Job $job -ErrorAction Stop | Select-Object -Last 1
+        if ($null -eq $payload -or -not [bool]$payload.Success) {
+            return [pscustomobject]@{
+                ProbeStatus = 'Unavailable'; PendingCount = $null; SecurityUpdateCount = $null
+                RebootRequiredCount = $null; RebootRequired = $null; Titles = @()
+                TimeoutSeconds = $TimeoutSeconds; Error = if ($null -ne $payload) { [string]$payload.Error } else { 'Windows Update search returned no result.' }
+            }
+        }
+
+        $summary = ConvertTo-WMPendingUpdateSummary -Updates @($payload.Updates)
+        $summary | Add-Member -NotePropertyName TimeoutSeconds -NotePropertyValue $TimeoutSeconds
+        return $summary
+    }
+    catch {
+        return [pscustomobject]@{
+            ProbeStatus = 'Unavailable'; PendingCount = $null; SecurityUpdateCount = $null
+            RebootRequiredCount = $null; RebootRequired = $null; Titles = @()
+            TimeoutSeconds = $TimeoutSeconds; Error = $_.Exception.Message
+        }
+    }
+    finally {
+        if ($null -ne $job) {
+            if ($job.State -in @('Running', 'NotStarted')) { Stop-Job -Job $job -ErrorAction SilentlyContinue }
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Get-WMHostFacts {
-    param([ValidateRange(0, 60)][int]$PerformanceSampleSeconds = 5)
+    param(
+        [ValidateRange(0, 60)][int]$PerformanceSampleSeconds = 5,
+        [ValidateRange(5, 120)][int]$UpdateTimeoutSeconds = 30,
+        [ValidateRange(5, 300)][int]$StorageTimeoutSeconds = 45
+    )
 
     $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem
     $computerSystem = Get-CimInstance -ClassName Win32_ComputerSystem
@@ -417,6 +521,21 @@ function Get-WMHostFacts {
     )
     $availableMemoryPercent = Get-WMSafePercentage -Numerator ([double]$operatingSystem.FreePhysicalMemory) -Denominator ([double]$operatingSystem.TotalVisibleMemorySize)
     $systemDriveFreePercent = Get-WMSafePercentage -Numerator ([double]$systemDrive.Free) -Denominator ([double]$totalBytes)
+
+    $storageDeadlineUtc = [DateTimeOffset]::UtcNow.AddSeconds($StorageTimeoutSeconds)
+    try {
+        $userFolderUsage = Get-WMKnownUserFolderUsage -Folders (Get-WMKnownUserFolderMap) -Top 5 -DeadlineUtc $storageDeadlineUtc
+    }
+    catch {
+        $userFolderUsage = [pscustomobject]@{ ProbeStatus = 'Unavailable'; Folders = @(); TotalBytes = [int64]0; Error = $_.Exception.Message }
+    }
+
+    try {
+        $browserCacheUsage = Get-WMBrowserCacheUsage -LocalAppDataPath $env:LOCALAPPDATA -DeadlineUtc $storageDeadlineUtc
+    }
+    catch {
+        $browserCacheUsage = [pscustomobject]@{ ProbeStatus = 'Unavailable'; Browsers = @(); TotalBytes = [int64]0; FileCount = 0; Error = $_.Exception.Message }
+    }
 
     [pscustomobject]@{
         ToolVersion              = $script:WMToolVersion
@@ -446,6 +565,9 @@ function Get-WMHostFacts {
         Antivirus                = Get-WMAntivirusInfo
         Updates                  = Get-WMUpdateInfo
         ActivePowerPlan          = Get-WMActivePowerPlan
+        UserFolderUsage         = $userFolderUsage
+        BrowserCacheUsage       = $browserCacheUsage
+        PendingUpdates          = Get-WMPendingWindowsUpdates -TimeoutSeconds $UpdateTimeoutSeconds
         MemoryTotalGiB           = [math]::Round(($operatingSystem.TotalVisibleMemorySize / 1MB), 1)
         MemoryAvailableGiB       = [math]::Round(($operatingSystem.FreePhysicalMemory / 1MB), 1)
         MemoryAvailablePercent   = $availableMemoryPercent
@@ -468,7 +590,8 @@ function Show-WMReportSummary {
     Write-Host "Windows Makeover $script:WMToolVersion - Diagnosis" -ForegroundColor Cyan
     Write-Host "PC: $($facts.ComputerName) | $($facts.OperatingSystem)"
     Write-Host "Version: $($facts.DisplayVersion) | Edition: $($facts.EditionId)"
-    Write-Host "Gesamtstatus: $($Report.OverallHealth)" -ForegroundColor $statusColor
+    Write-Host "Overall status: $($Report.OverallHealth)" -ForegroundColor $statusColor
+    Write-Host "Run context: $(Get-WMRunContextMessage -IsAdministrator ([bool]$facts.IsAdministrator))"
     Write-Host ''
     Write-Host 'Summary' -ForegroundColor Cyan
     Write-Host ("  System drive: {0} free of {1} ({2})" -f (Format-WMByteSize $facts.SystemDriveFreeBytes), (Format-WMByteSize $facts.SystemDriveTotalBytes), (Format-WMPercentage $facts.SystemDriveFreePercent))
@@ -504,6 +627,15 @@ function Show-WMReportSummary {
     if ($facts.Updates.ProbeStatus -eq 'Available' -and $null -ne $facts.Updates.LastHotFixAgeDays) {
         Write-Host "  Last detected hotfix: $($facts.Updates.LastHotFixId), $($facts.Updates.LastHotFixAgeDays) days ago"
     }
+    if ($facts.PendingUpdates.ProbeStatus -eq 'Available') {
+        Write-Host "  Pending Windows updates: $($facts.PendingUpdates.PendingCount) (security/critical: $($facts.PendingUpdates.SecurityUpdateCount), reboot required: $($facts.PendingUpdates.RebootRequired))"
+    }
+    elseif ($facts.PendingUpdates.ProbeStatus -eq 'TimedOut') {
+        Write-Host "  Pending Windows updates: probe timed out after $($facts.PendingUpdates.TimeoutSeconds) seconds"
+    }
+    if ($facts.BrowserCacheUsage.ProbeStatus -in @('Available', 'Partial')) {
+        Write-Host "  Browser caches: $(Format-WMByteSize $facts.BrowserCacheUsage.TotalBytes)"
+    }
 
     if (@($Report.Recommendations).Count -eq 0) {
         Write-Host ''
@@ -518,6 +650,23 @@ function Show-WMReportSummary {
         }
     }
 
+    if (@($facts.UserFolderUsage.Folders).Count -gt 0) {
+        Write-Host ''
+        Write-Host 'Largest known user folders' -ForegroundColor Cyan
+        $facts.UserFolderUsage.Folders |
+            Select-Object Name, @{ Name = 'Size'; Expression = { Format-WMByteSize $_.TotalBytes } }, FileCount, ProbeStatus |
+            Format-Table -AutoSize
+    }
+
+    $measuredBrowserCaches = @($facts.BrowserCacheUsage.Browsers | Where-Object { $_.ProbeStatus -ne 'Unavailable' })
+    if ($measuredBrowserCaches.Count -gt 0) {
+        Write-Host ''
+        Write-Host 'Browser cache usage' -ForegroundColor Cyan
+        $measuredBrowserCaches |
+            Select-Object Name, @{ Name = 'Size'; Expression = { Format-WMByteSize $_.TotalBytes } }, FileCount, ProfileCount, ProbeStatus |
+            Format-Table -AutoSize
+    }
+
     if (@($facts.PerformanceSample.TopCpuProcesses).Count -gt 0) {
         Write-Host ''
         Write-Host 'CPU processes at the end of the short sample' -ForegroundColor Cyan
@@ -528,7 +677,7 @@ function Show-WMReportSummary {
         Write-Host ''
         Write-Host 'I/O processes at the end of the short sample' -ForegroundColor Cyan
         $facts.PerformanceSample.TopIoProcesses |
-            Select-Object Name, Id, @{ Name = 'I/O pro Sekunde'; Expression = { Format-WMByteSize $_.IoBytesPerSecond } } |
+            Select-Object Name, Id, @{ Name = 'I/O per second'; Expression = { Format-WMByteSize $_.IoBytesPerSecond } } |
             Format-Table -AutoSize
     }
 
@@ -547,54 +696,70 @@ function Show-WMReportSummary {
 Assert-WindowsHost
 
 if ($Mode -eq 'Diagnosis') {
-    $facts = Get-WMHostFacts -PerformanceSampleSeconds $SampleSeconds
+    $facts = Get-WMHostFacts -PerformanceSampleSeconds $SampleSeconds -UpdateTimeoutSeconds $UpdateTimeoutSeconds -StorageTimeoutSeconds $StorageTimeoutSeconds
     $report = New-WMDiagnosis -Facts $facts
-    $defaultPath = Join-Path $PSScriptRoot (Join-Path 'reports' ("diagnosis-{0}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss')))
+    $reportDirectory = Get-WMDefaultReportDirectory
+    $defaultPath = Join-Path $reportDirectory ("diagnosis-{0}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
     $destination = if ($ReportPath) { $ReportPath } else { $defaultPath }
     $savedPath = Save-WMDiagnosticReport -Report $report -Path $destination
 
     Show-WMReportSummary -Report $report
     Write-Host ''
-    Write-Host "Diagnosebericht gespeichert: $savedPath" -ForegroundColor Green
+    Write-Host "Diagnostic report saved: $savedPath" -ForegroundColor Green
     Write-Host 'Next step: start Remediate with this exact report.'
     return
 }
 
 if (-not $ReportPath) {
-    throw 'Remediate requires -ReportPath for a previously generated diagnostic report.'
+    Write-Error 'Remediate requires -ReportPath for a previously generated diagnostic report.' -ErrorAction Continue
+    exit 1
 }
 if (-not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
-    throw "Diagnostic report not found: $ReportPath"
+    Write-Error "Diagnostic report not found: $ReportPath" -ErrorAction Continue
+    exit 1
 }
 
-$report = Get-Content -LiteralPath $ReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$resolvedReportPath = (Resolve-Path -LiteralPath $ReportPath).Path
-$currentUserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$reportValidation = Test-WMDiagnosticReport -Report $report -ComputerName $env:COMPUTERNAME -UserSid $currentUserSid -TempPath $env:TEMP
+try {
+    $report = Get-Content -LiteralPath $ReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $resolvedReportPath = (Resolve-Path -LiteralPath $ReportPath).Path
+    $currentUserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $reportValidation = Test-WMDiagnosticReport -Report $report -ComputerName $env:COMPUTERNAME -UserSid $currentUserSid -TempPath $env:TEMP
+}
+catch {
+    Write-Error "Diagnostic report validation failed: $($_.Exception.Message)" -ErrorAction Continue
+    exit 1
+}
 if (-not $reportValidation.IsValid) {
-    throw ("The diagnostic report cannot be used for cleanup: " + ($reportValidation.Reasons -join ' '))
+    Write-Error ("The diagnostic report cannot be used for cleanup: " + ($reportValidation.Reasons -join ' ')) -ErrorAction Continue
+    exit 1
 }
 $auditDirectory = Split-Path -Path $resolvedReportPath -Parent
 $auditPath = Join-Path -Path $auditDirectory -ChildPath ("remediation-audit-{0}.jsonl" -f (Get-Date -Format 'yyyyMMdd'))
 
 # Sizes and thresholds are measured again directly before selection.
 # Recommendations and measurements from the JSON file do not control a deletion action.
-$currentTempPreview = Get-WMCleanupPreview -Path $env:TEMP
-$currentCleanupReport = [pscustomobject]@{
-    SchemaVersion = $report.SchemaVersion
-    Facts = [pscustomobject]@{
-        TempSizeBytes       = [Int64]$currentTempPreview.TotalBytes
-        RecycleBinSizeBytes = [Int64](Get-WMRecycleBinSize)
+try {
+    $currentTempPreview = Get-WMCleanupPreview -Path $env:TEMP
+    $currentCleanupReport = [pscustomobject]@{
+        SchemaVersion = $report.SchemaVersion
+        Facts = [pscustomobject]@{
+            TempSizeBytes       = [Int64]$currentTempPreview.TotalBytes
+            RecycleBinSizeBytes = [Int64](Get-WMRecycleBinSize)
+        }
     }
+    $plan = @(Get-WMSafeRemediationPlan -Report $currentCleanupReport)
 }
-$plan = @(Get-WMSafeRemediationPlan -Report $currentCleanupReport)
+catch {
+    Write-Error "Cleanup preparation failed: $($_.Exception.Message)" -ErrorAction Continue
+    exit 2
+}
 if ($Action) {
     $plan = @($plan | Where-Object { $_.Id -in $Action })
 }
 
 if ($plan.Count -eq 0) {
     Write-Host 'There are no automatically allowed actions for this report.' -ForegroundColor Yellow
-    return
+    exit 0
 }
 
 Write-Host ''
@@ -603,6 +768,7 @@ $plan |
     Select-Object Id, Risk, @{ Name = 'Estimated space recovery'; Expression = { Format-WMByteSize $_.EstimatedBytes } }, Scope |
     Format-Table -AutoSize
 
+$remediationResults = [System.Collections.Generic.List[object]]::new()
 foreach ($step in $plan) {
     if (-not $Force -and -not $WhatIfPreference) {
         $answer = Read-Host "Run '$($step.Title)'? (Y/N)"
@@ -612,14 +778,28 @@ foreach ($step in $plan) {
         }
     }
 
-    switch ($step.Id) {
-        'CleanTempFiles' {
-            $result = Invoke-WMSafeRemediation -Id $step.Id -Confirm:$false -WhatIf:$WhatIfPreference
+    try {
+        switch ($step.Id) {
+            'CleanTempFiles' {
+                $result = Invoke-WMSafeRemediation -Id $step.Id -Confirm:$false -WhatIf:$WhatIfPreference
+            }
+            'CleanRecycleBin' {
+                $result = Invoke-WMSafeRemediation -Id $step.Id -Confirm:$false -WhatIf:$WhatIfPreference
+            }
+            default { throw "Unsupported action in the plan: $($step.Id)" }
         }
-        'CleanRecycleBin' {
-            $result = Invoke-WMSafeRemediation -Id $step.Id -Confirm:$false -WhatIf:$WhatIfPreference
+    }
+    catch {
+        $result = [pscustomobject]@{
+            ActionId          = $step.Id
+            Status            = 'Failed'
+            Removed           = $null
+            RemovedKnown      = $false
+            RemovedDirectories = 0
+            Failed            = 1
+            AffectedDrives    = @()
+            Error             = $_.Exception.Message
         }
-        default { throw "Unsupported action in the plan: $($step.Id)" }
     }
 
     if ($result.Status -ne 'WhatIf') {
@@ -629,13 +809,23 @@ foreach ($step in $plan) {
         }
         catch {
             Write-Warning "Cleanup ran, but the audit log could not be written: $($_.Exception.Message)"
+            if ($result.Status -ne 'Failed') {
+                $result.Status = 'CompletedWithWarnings'
+            }
+            $result.Failed = [math]::Max(1, [int]$result.Failed)
+            $result | Add-Member -NotePropertyName AuditError -NotePropertyValue $_.Exception.Message -Force
         }
     }
 
-    if ($result.Removed -eq -1) {
-        Write-Host "$($result.ActionId): $($result.Status)"
+    $remediationResults.Add($result)
+    if ($result.RemovedKnown -eq $false) {
+        $affectedDrives = if (@($result.AffectedDrives).Count -gt 0) { @($result.AffectedDrives) -join ', ' } else { 'none' }
+        Write-Host "$($result.ActionId): $($result.Status); affected drives: $affectedDrives; failures: $($result.Failed)"
     }
     else {
-        Write-Host "$($result.ActionId): $($result.Status); removed files: $($result.Removed); failures: $($result.Failed)"
+        Write-Host "$($result.ActionId): $($result.Status); removed files: $($result.Removed); removed directories: $($result.RemovedDirectories); failures: $($result.Failed)"
     }
 }
+
+$remediationExitCode = Get-WMProcessExitCode -Results $remediationResults.ToArray()
+exit $remediationExitCode
