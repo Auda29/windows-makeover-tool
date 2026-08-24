@@ -1,148 +1,148 @@
 # Windows Makeover 0.2.0-beta
 
-Ein vorsichtiges PowerShell-Tool für die erste Hilfe bei langsamen Windows-PCs. Es ist für Besuche bei Familie und Freunden ausgelegt: zuerst transparent diagnostizieren, danach nur klar begrenzte Maßnahmen anbieten.
+A cautious PowerShell tool for first-line troubleshooting on slow Windows PCs. It is designed for helping family and friends: diagnose transparently first, then offer only clearly scoped actions.
 
-> **Beta-Status:** Diagnose, JSON-Berichte und der geführte Bereinigungsablauf sind implementiert und automatisiert getestet. Die Beta sollte vor einem breiten Einsatz noch auf verschiedenen echten Windows-7- bis Windows-11-PCs geprüft werden. Sie ersetzt keine Datensicherung und keine professionelle Fehlerdiagnose bei Hardwaredefekten, Malware oder Laufwerksfehlern.
+> **Beta status:** Diagnosis, JSON reports, and the guided cleanup workflow are implemented and automatically tested. Before broad use, test the beta on several real Windows 7 through Windows 11 PCs. It does not replace backups or professional diagnosis of hardware faults, malware, or drive failures.
 
-## Was das Tool macht
+## What the tool does
 
-### Phase 1: Nur Diagnose
+### Phase 1: Diagnosis only
 
-`Diagnose` verändert **nichts**. Sie sammelt und speichert einen JSON-Bericht mit:
+`Diagnosis` makes **no changes**. It collects and saves a JSON report containing:
 
-- Windows-Version, Rechnername und Admin-Status
-- freiem Platz auf dem Systemlaufwerk
-- Größe und Anzahl der Dateien im Temp-Ordner des aktuellen Benutzers
-- Größe des Papierkorbs des aktuellen Benutzers
-- Anzahl und Details der Autostart-Einträge
-- ausstehendem Windows-Neustart und Laufzeit seit dem letzten Start
-- verfügbarem Arbeitsspeicher sowie den fünf aktuell größten Speicherverbrauchern
-- einer standardmäßig fünfsekündigen Kurzprobe für CPU, Systemdatenträger und Commit-Auslastung samt auffälligen CPU- und I/O-Prozessen
-- Typ, Modell und Windows-Grundzustand des Systemlaufwerks
-- automatischer oder manueller Verwaltung der Auslagerungsdatei
-- registriertem Virenschutz und, soweit verfügbar, Defender-Echtzeitschutz
-- Alter des letzten über `Win32_QuickFixEngineering` erkannten Hotfixes
-- Windows-Produktfamilie und allgemeinem Supportstatus
-- aktivem Energiesparplan, soweit Windows ihn auslesen lässt
+- Windows version, computer name, and administrator status
+- free space on the system drive
+- size and file count of the current user's temp folder
+- size of the current user's Recycle Bin
+- startup-app count and details
+- pending Windows restart and time since the last restart
+- available memory and the five currently largest memory consumers
+- a five-second CPU, system-drive, and commit-utilization sample by default, including notable CPU and I/O processes
+- the system drive's type, model, and Windows-reported basic state
+- automatic or manual paging-file management
+- registered antivirus protection and, when available, Defender real-time protection
+- the age of the most recent hotfix detected through `Win32_QuickFixEngineering`
+- Windows product family and general support status
+- the active power plan when Windows can read it
 
-Die Konsole zeigt eine verständliche Kurzbewertung. Der vollständige Bericht enthält zusätzlich einen versionsabhängigen manuellen Leitfaden für Autostart, Updates, Malware-Scan, Laufwerksoptimierung, Energiemodus, visuelle Effekte, Clean-Boot-Test, Systemdateireparatur, Dateisystemprüfung und Wiederherstellung. Diese Schritte werden nicht automatisch ausgeführt.
+The console displays a concise, readable assessment. The complete report also contains a version-specific manual playbook for startup apps, updates, malware scans, drive optimization, power mode, visual effects, clean-boot testing, system-file repair, file-system checks, and recovery. These steps are never run automatically.
 
-### Phase 2: Geführte Maßnahmen
+### Phase 2: Guided actions
 
-`Remediate` akzeptiert nur einen aktuellen Bericht vom selben PC und demselben Windows-Benutzer. Der Bericht darf maximal 30 Tage alt sein und höchstens fünf Minuten in der Zukunft liegen. Ältere Berichtsformate müssen durch eine neue Diagnose ersetzt werden.
+`Remediate` accepts only a recent report from the same PC and the same Windows user. The report must be no more than 30 days old and no more than five minutes in the future. Generate a new diagnosis instead of using an older report format.
 
-Vor der Auswahl misst das Tool Temp-Ordner und Papierkorb erneut. Editierte Empfehlungen oder Größenangaben aus der JSON-Datei lösen keine Maßnahme aus. Für jede aktuell angebotene Aktion zeigt das Tool Umfang und Speichergewinn an und fordert eine eigene Bestätigung an.
+Before presenting actions, the tool measures the temp folder and Recycle Bin again. Edited recommendations or size values in the JSON file cannot trigger an action. Every currently available action shows its scope and estimated space recovery and requires individual confirmation.
 
-| Aktion | Wann angeboten | Tatsächlicher Umfang |
+| Action | Offered when | Actual scope |
 |---|---|---|
-| `CleanTempFiles` | Mehr als 500 MB im Benutzer-Temp-Ordner | Löscht nur Dateien im aktuellen Benutzer-Temp-Ordner. Gesperrte Dateien werden übersprungen und als Fehler gezählt. |
-| `CleanRecycleBin` | Mehr als 500 MB im Papierkorb | Leert den Papierkorb des aktuellen Benutzers auf lokalen Laufwerken. Dateien sind danach nicht mehr über den Papierkorb wiederherstellbar. |
+| `CleanTempFiles` | More than 500 MB in the user's temp folder | Deletes only files in the current user's temp folder. Locked files are skipped and counted as failures. |
+| `CleanRecycleBin` | More than 500 MB in the Recycle Bin | Empties the current user's Recycle Bin on local drives. Files cannot be restored through the Recycle Bin afterward. |
 
-Autostart, Updates, Virenschutz, Auslagerungsdatei, Energiesparplan, visuelle Effekte, Clean Boot, Laufwerksoptimierung, Systemreparatur und Wiederherstellung werden nur als **Hinweise** oder manuelle Prüfschritte ausgegeben. Das Tool ändert sie nicht automatisch.
+Startup apps, updates, antivirus, paging file, power plan, visual effects, clean boot, drive optimization, system repair, and recovery are reported only as **guidance** or manual review steps. The tool does not change them automatically.
 
-Jeder tatsächlich gestartete Bereinigungsschritt wird zusätzlich im gleichen Ordner wie der verwendete Diagnosebericht als `remediation-audit-YYYYMMDD.jsonl` protokolliert. Jeder Eintrag enthält Zeitstempel, verwendeten Bericht, Aktion, Ergebnis sowie entfernte und fehlgeschlagene Elemente. Ein `-WhatIf`-Lauf erzeugt bewusst keinen Audit-Eintrag, weil dabei keine Bereinigung ausgeführt wird.
+Every cleanup action that actually starts is also recorded next to the diagnostic report as `remediation-audit-YYYYMMDD.jsonl`. Each line includes a timestamp, the report used, the action, its result, and removed and failed items. A `-WhatIf` run deliberately creates no audit entry because no cleanup is performed.
 
-## Voraussetzungen
+## Requirements
 
-- Windows 7 SP1, Windows 8/8.1, Windows 10 oder Windows 11
-- Windows PowerShell 5.1 oder PowerShell 7+
-- kein Administratorzugang für die vorgesehenen Maßnahmen erforderlich
+- Windows 7 SP1, Windows 8/8.1, Windows 10, or Windows 11
+- Windows PowerShell 5.1 or PowerShell 7+
+- no administrator access is required for the supported cleanup actions
 
-Auf älteren Windows-Versionen können einzelne moderne Storage- oder Defender-Schnittstellen fehlen. Die Diagnose markiert diese Probe dann als nicht verfügbar und läuft mit den übrigen Daten weiter. Für Windows 7 muss Windows PowerShell 5.1 bereits installiert sein.
+On older Windows versions, some modern storage or Defender interfaces may not exist. The diagnosis marks those probes as unavailable and continues with the remaining data. Windows PowerShell 5.1 must already be installed on Windows 7.
 
-## Schnellstart
+## Quick start
 
-1. Repository auf den betroffenen PC kopieren oder klonen.
-2. PowerShell im Projektordner öffnen.
-3. Diagnose starten:
-
-```powershell
-.\windows-makeover.ps1 -Mode Diagnose
-```
-
-Der Report wird standardmäßig nach `reports\diagnosis-YYYYMMDD-HHMMSS.json` geschrieben.
-
-Die Kurzprobe lässt sich für einen ruhigeren Mittelwert verlängern oder vollständig überspringen:
+1. Copy or clone the repository to the affected PC.
+2. Open PowerShell in the project directory.
+3. Start a diagnosis:
 
 ```powershell
-.\windows-makeover.ps1 -Mode Diagnose -SampleSeconds 15
-.\windows-makeover.ps1 -Mode Diagnose -SampleSeconds 0
+.\windows-makeover.ps1 -Mode Diagnosis
 ```
 
-Zulässig sind 0 bis 60 Sekunden. Eine kurze Probe zeigt eine Momentaufnahme und ersetzt bei sporadischen Hängern keine längere Leistungsaufzeichnung.
+By default, the report is written to `reports\diagnosis-YYYYMMDD-HHMMSS.json`.
 
-4. Den gerade erzeugten Report in den geführten Bereinigungslauf geben:
+You can lengthen the short sample for a smoother average or skip it completely:
+
+```powershell
+.\windows-makeover.ps1 -Mode Diagnosis -SampleSeconds 15
+.\windows-makeover.ps1 -Mode Diagnosis -SampleSeconds 0
+```
+
+Values from 0 to 60 seconds are supported. A short sample is only a snapshot and does not replace a longer performance trace for intermittent hangs.
+
+4. Start the guided cleanup with the report you just created:
 
 ```powershell
 .\windows-makeover.ps1 -Mode Remediate -ReportPath .\reports\diagnosis-YYYYMMDD-HHMMSS.json
 ```
 
-### Erst Vorschau, dann handeln
+### Preview first, then act
 
-`-WhatIf` führt **keine** Löschung aus und ist der empfohlene erste Remediate-Lauf:
+`-WhatIf` performs **no deletion** and is the recommended first Remediate run:
 
 ```powershell
 .\windows-makeover.ps1 -Mode Remediate -ReportPath .\reports\diagnosis-YYYYMMDD-HHMMSS.json -WhatIf
 ```
 
-Eine einzelne Maßnahme lässt sich gezielt auswählen:
+You can select a single action explicitly:
 
 ```powershell
 .\windows-makeover.ps1 -Mode Remediate -ReportPath .\reports\diagnosis-YYYYMMDD-HHMMSS.json -Action CleanTempFiles
 ```
 
-`-Force` überspringt nur die eigene J/N-Abfrage. Es ist für beaufsichtigte Automatisierung gedacht und nicht der Standardweg.
+`-Force` only skips the tool's own Y/N prompt. It is intended for supervised automation and is not the default path.
 
-## Umgang mit Execution Policy
+## Execution Policy
 
-Skripte aus dem Internet sollten vor der Ausführung geprüft werden. Wenn Windows die Datei blockiert, kann man nach Sichtprüfung die Eigenschaften der Datei öffnen und **Zulassen** aktivieren. Alternativ nur diese Datei freigeben:
+Review scripts downloaded from the internet before running them. If Windows blocks the file, inspect it first, then open the file properties and choose **Unblock**. Alternatively, unblock only this file:
 
 ```powershell
 Unblock-File .\windows-makeover.ps1
 ```
 
-Keine globale Lockerung der Execution Policy und kein `ExecutionPolicy Bypass` nötig.
+No global Execution Policy relaxation and no `ExecutionPolicy Bypass` are necessary.
 
-## Sicherheitsgrenzen
+## Safety boundaries
 
-Windows Makeover macht **keinen** aggressiven „Debloat“ und führt insbesondere Folgendes nicht aus:
+Windows Makeover does **not** perform aggressive debloating and specifically does not:
 
-- keine automatisierte Entfernung vorinstallierter Apps,
-- keine Registry-Cleaner oder pauschalen Registry-Änderungen,
-- kein Abschalten von Windows-Diensten, Defender, Updates oder Telemetrie,
-- kein Löschen von Downloads, Dokumenten oder Desktop-Dateien,
-- keine DISM-/Component-Store-Bereinigung,
-- keine Treiber- oder BIOS-Änderungen.
+- automatically remove preinstalled apps,
+- run registry cleaners or broad registry changes,
+- disable Windows services, Defender, updates, or telemetry,
+- delete files from Downloads, Documents, or the Desktop,
+- run DISM/component-store cleanup,
+- modify drivers or BIOS settings.
 
-Die Laufwerksprüfung liest nur Statuswerte, die Windows bereitstellt. `OK` oder `Healthy` ist keine vollständige SMART-Diagnose und garantiert keinen fehlerfreien Datenträger. Der letzte von WMI gemeldete Hotfix ist außerdem kein vollständiger Nachweis, dass Windows Update lückenlos aktuell ist.
+Drive checks read only the status values that Windows provides. `OK` or `Healthy` is not a complete SMART diagnosis and does not guarantee a healthy drive. Likewise, the last hotfix reported by WMI is not complete proof that Windows Update is fully current.
 
-Diagnoseberichte bleiben lokal, enthalten aber Rechnername, Benutzer-SID, Prozess- und Autostart-Namen sowie System- und Sicherheitsstatus. Vor dem Teilen sollten sie geprüft und bei Bedarf anonymisiert werden. Vollständige Autostart-Befehlszeilen werden bewusst nicht gespeichert.
+Diagnostic reports remain local, but contain the computer name, user SID, process names, startup-app names, and system and security status. Review and anonymize them before sharing if necessary. Full startup command lines are deliberately not saved.
 
-Diese Eingriffe können Wiederherstellung, Updates oder Programme beschädigen. Für ein späteres, optionales Expertenprofil sollten Maßnahmen nur einzeln, nachvollziehbar, reversibel und mit vorherigem Restore-Point umgesetzt werden.
+These interventions can damage recovery options, updates, or applications. Any future optional expert profile should use only individually selected, understandable, reversible actions and create a restore point beforehand.
 
-## Fehlersuche außerhalb des Tools
+## Troubleshooting beyond the tool
 
-Das Tool kann einen Hardwaredefekt, Überhitzung, Malware oder instabile Treiber nicht zuverlässig ausschließen. Bei dauerhaft langsamen PCs nach der Bereinigung sind gute nächste Schritte:
+The tool cannot reliably rule out a hardware fault, overheating, malware, or unstable drivers. If the PC remains slow after cleanup, sensible next steps are:
 
-1. Windows Update abschließen und neu starten.
-2. Im Task-Manager nach dauerhaft hoher CPU-, RAM-, Datenträger- oder Netzwerkauslastung schauen.
-3. SMART-Werte des Laufwerks mit einem geeigneten Hersteller- oder Diagnosetool prüfen und bei Auffälligkeiten zuerst sichern.
-4. Mit dem registrierten Virenschutz einen aktuellen Scan ausführen.
-5. Bei mechanischen Festplatten oder nur 4 GB RAM eher Hardware-Upgrade statt weiterer „Tweaks“ erwägen.
-6. DISM/SFC beziehungsweise unter Windows 7 SFC und CheckSUR nur bei konkreten Windows-Fehlern einsetzen.
-7. CHKDSK mit Reparaturoptionen nur nach einem Dateisystembefund und vorhandener Datensicherung ausführen.
+1. Finish Windows Update and restart.
+2. Use Task Manager to check for sustained high CPU, RAM, disk, or network activity.
+3. Check the drive's SMART values with a suitable vendor or diagnostic tool; back up data first if anything looks suspicious.
+4. Run a current scan with the registered antivirus product.
+5. Consider a hardware upgrade rather than further tweaks for mechanical hard drives or systems with only 4 GB RAM.
+6. Use DISM/SFC — or SFC and CheckSUR on Windows 7 — only when there is a specific Windows error.
+7. Run CHKDSK with repair options only after a file-system finding and with a verified backup.
 
-Normale Windows-7-, Windows-8-/8.1- und Windows-10-Ausgaben werden als regulär nicht mehr unterstützt gekennzeichnet. LTSC, LTSB, IoT, Embedded, POSReady und Server erhalten bewusst nur den Hinweis, ihren abweichenden Microsoft-Lebenszyklus einzeln zu prüfen.
+Regular Windows 7, Windows 8/8.1, and Windows 10 editions are marked as no longer regularly supported. LTSC, LTSB, IoT, Embedded, POSReady, and Server editions intentionally receive only guidance to check their distinct Microsoft lifecycle individually.
 
-## Entwicklung und Tests
+## Development and tests
 
-Die Tests benötigen Pester 5.7.1. Installation für den aktuellen Benutzer:
+The tests require Pester 5.7.1. Install it for the current user:
 
 ```powershell
 Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser
 ```
 
-Die Pester-Suite prüft Diagnose- und Empfehlungslogik, Windows-Lebenszyklus, manuellen Leitfaden, Live-Schwellenwerte, Bindung des Berichts an PC und Benutzer, `-WhatIf`, JSON-Speicherung, UTF-8-BOM und die Syntax des Einstiegsskripts:
+The Pester suite covers diagnosis and recommendation logic, Windows lifecycle, the manual playbook, live thresholds, report binding to PC and user, `-WhatIf`, remediation audit logging, JSON storage, UTF-8 BOM, and entry-point syntax:
 
 ```powershell
 Invoke-Pester .\tests\WindowsMakeover.Tests.ps1 -Output Detailed
@@ -150,29 +150,29 @@ Invoke-Pester .\tests\WindowsMakeover.Tests.ps1 -Output Detailed
 
 ## Releases
 
-Ein Tag wie `v0.2.0-beta` startet den Release-Workflow. Er testet den Stand unter Windows PowerShell 5.1 und PowerShell 7 und veröffentlicht danach drei Dateien:
+A tag such as `v0.2.0-beta` starts the release workflow. It tests the tag on Windows PowerShell 5.1 and PowerShell 7, then publishes three files:
 
-- `windows-makeover-0.2.0-beta.ps1` ist das eigenständige Skript ohne externes Modul.
-- `windows-makeover-0.2.0-beta.zip` enthält das normale Einstiegsskript, das Modul und die README.
-- `SHA256SUMS.txt` enthält die SHA-256-Prüfsummen beider Downloads.
+- `windows-makeover-0.2.0-beta.ps1` is the standalone script without an external module.
+- `windows-makeover-0.2.0-beta.zip` contains the regular entry script, module, and README.
+- `SHA256SUMS.txt` contains SHA-256 checksums for both downloads.
 
-Die Prüfsumme eines Downloads lässt sich unter Windows so vergleichen:
+Compare a download's checksum on Windows with:
 
 ```powershell
 Get-FileHash .\windows-makeover-0.2.0-beta.ps1 -Algorithm SHA256
 ```
 
-Der Workflow kann außerdem manuell in GitHub Actions für einen bereits vorhandenen Tag gestartet werden. Release-Version, Tag und die in `windows-makeover.ps1` deklarierte Tool-Version müssen übereinstimmen.
+The workflow can also be triggered manually in GitHub Actions for an existing tag. The release version, tag, and the tool version declared in `windows-makeover.ps1` must match.
 
-## Projektstruktur
+## Project structure
 
 ```text
-src/WindowsMakeover.psm1       # Testbare Diagnose-, Report- und Bereinigungslogik
-windows-makeover.ps1           # Windows-Einstiegspunkt für Diagnose und Remediate
-build/New-WMReleaseAssets.ps1  # Erstellt Standalone-Skript, ZIP und SHA-256-Datei
+src/WindowsMakeover.psm1       # Testable diagnosis, report, and cleanup logic
+windows-makeover.ps1           # Windows entry point for Diagnosis and Remediate
+build/New-WMReleaseAssets.ps1  # Creates the standalone script, ZIP, and SHA-256 file
 tests/WindowsMakeover.Tests.ps1
-.github/workflows/test.yml      # Pester unter Windows PowerShell 5.1 und PowerShell 7
-.github/workflows/release.yml   # Testet Tags, baut Assets und erstellt GitHub Releases
-.editorconfig                   # UTF-8-BOM für PowerShell-Quelldateien
-reports/                       # Lokal erzeugte, nicht versionierte Berichte
+.github/workflows/test.yml      # Pester on Windows PowerShell 5.1 and PowerShell 7
+.github/workflows/release.yml   # Tests tags, builds assets, and creates GitHub releases
+.editorconfig                   # UTF-8 BOM for PowerShell source files
+reports/                        # Locally generated, unversioned reports
 ```

@@ -69,7 +69,7 @@ function Get-WMWindowsLifecycle {
             ProductFamily  = 'SpecialEdition'
             Status         = 'SpecialLifecycle'
             SupportEndDate = $null
-            Message        = 'Diese Windows-Ausgabe hat einen eigenen Lebenszyklus. Prüfen Sie Edition und Supportende bei Microsoft.'
+            Message        = 'This Windows edition has its own lifecycle. Check its edition and end-of-support date with Microsoft.'
         }
     }
 
@@ -78,7 +78,7 @@ function Get-WMWindowsLifecycle {
             ProductFamily  = 'Windows7'
             Status         = 'Unsupported'
             SupportEndDate = '2020-01-14'
-            Message        = 'Der reguläre Support für Windows 7 ist beendet. Ein Upgrade oder Geräteaustausch ist sicherer als weitere Optimierung.'
+            Message        = 'Regular support for Windows 7 has ended. Upgrading or replacing the device is safer than further tuning.'
         }
     }
 
@@ -87,7 +87,7 @@ function Get-WMWindowsLifecycle {
             ProductFamily  = 'Windows8'
             Status         = 'Unsupported'
             SupportEndDate = '2016-01-12'
-            Message        = 'Der reguläre Support für Windows 8 ist beendet. Ein Upgrade oder Geräteaustausch ist sicherer als weitere Optimierung.'
+            Message        = 'Regular support for Windows 8 has ended. Upgrading or replacing the device is safer than further tuning.'
         }
     }
 
@@ -96,7 +96,7 @@ function Get-WMWindowsLifecycle {
             ProductFamily  = 'Windows81'
             Status         = 'Unsupported'
             SupportEndDate = '2023-01-10'
-            Message        = 'Der reguläre Support für Windows 8.1 ist beendet. Ein Upgrade oder Geräteaustausch ist sicherer als weitere Optimierung.'
+            Message        = 'Regular support for Windows 8.1 has ended. Upgrading or replacing the device is safer than further tuning.'
         }
     }
 
@@ -105,7 +105,7 @@ function Get-WMWindowsLifecycle {
             ProductFamily  = 'Windows10'
             Status         = 'Unsupported'
             SupportEndDate = '2025-10-14'
-            Message        = 'Der reguläre Support für Windows 10 ist beendet. Prüfen Sie Windows 11, ESU oder einen Geräteaustausch.'
+            Message        = 'Regular support for Windows 10 has ended. Consider Windows 11, ESU, or replacing the device.'
         }
     }
 
@@ -114,7 +114,7 @@ function Get-WMWindowsLifecycle {
             ProductFamily  = 'Windows11'
             Status         = 'VersionSpecific'
             SupportEndDate = $null
-            Message        = 'Der Support hängt von Edition und Windows-11-Version ab. Installieren Sie eine aktuell unterstützte Version.'
+            Message        = 'Support depends on the edition and Windows 11 version. Install a currently supported version.'
         }
     }
 
@@ -122,7 +122,7 @@ function Get-WMWindowsLifecycle {
         ProductFamily  = 'Unknown'
         Status         = 'Unknown'
         SupportEndDate = $null
-        Message        = 'Der Windows-Supportstatus konnte nicht eindeutig bestimmt werden.'
+        Message        = 'The Windows support status could not be determined reliably.'
     }
 }
 
@@ -138,112 +138,112 @@ function Get-WMManualPlaybook {
     $lifecycleStatus = [string](Get-WMFactValue -Facts $lifecycle -Name 'Status' -Default 'Unknown')
 
     $startupStep = if ($version.Major -eq 6 -and $version.Minor -eq 1) {
-        'msconfig und die Autostart-Ordner öffnen. Einträge einzeln prüfen und dokumentieren.'
+        'Open msconfig and the startup folders. Review and document entries one at a time.'
     }
     else {
-        'Task-Manager > Autostart öffnen. Einträge mit hoher Auswirkung und unbekanntem Zweck einzeln prüfen.'
+        'Open Task Manager > Startup apps. Review high-impact entries and entries with an unknown purpose one at a time.'
     }
 
     $updateStep = if ($lifecycleStatus -eq 'Unsupported') {
-        'Upgrade, ESU-Sonderfall oder Geräteaustausch prüfen. Einzelne Tuning-Schritte ersetzen keine Sicherheitsupdates.'
+        'Consider an upgrade, an ESU exception, or replacing the device. Individual tuning steps do not replace security updates.'
     }
     else {
-        'Windows Update öffnen, verfügbare Updates prüfen und einen verlangten Neustart abschließen.'
+        'Open Windows Update, check for available updates, and complete any requested restart.'
     }
 
     $repairSteps = if ($version.Major -eq 6 -and $version.Minor -eq 1) {
         @(
-            'Nur bei Windows-Fehlern oder beschädigten Funktionen eine administrative Eingabeaufforderung öffnen.',
-            'sfc /scannow ausführen.',
-            'Bei Windows-Update-Komponentenfehlern das passende System Update Readiness Tool von Microsoft verwenden.'
+            'Open an elevated command prompt only for Windows errors or damaged features.',
+            'Run sfc /scannow.',
+            'For Windows Update component errors, use the appropriate Microsoft System Update Readiness Tool.'
         )
     }
 
     else {
         @(
-            'Nur bei Windows-Fehlern oder beschädigten Funktionen eine administrative Eingabeaufforderung öffnen.',
-            'DISM.exe /Online /Cleanup-Image /RestoreHealth ausführen.',
-            'Danach sfc /scannow ausführen.'
+            'Open an elevated command prompt only for Windows errors or damaged features.',
+            'Run DISM.exe /Online /Cleanup-Image /RestoreHealth.',
+            'Danach Run sfc /scannow.'
         )
     }
 
     $powerStep = if ($version.Major -eq 6 -and $version.Minor -le 3) {
-        'Systemsteuerung > Hardware und Sound > Energieoptionen öffnen. Bei unerwartet niedriger Leistung im Netzbetrieb den Plan Ausbalanciert prüfen.'
+        'Open Control Panel > Hardware and Sound > Power Options. If performance is unexpectedly low while plugged in, check the Balanced plan.'
     }
     else {
-        'Einstellungen > System > Netzbetrieb und Akku öffnen. Bei unerwartet niedriger Leistung im Netzbetrieb den Energiemodus Ausbalanciert prüfen.'
+        'Open Settings > System > Power & battery. If performance is unexpectedly low while plugged in, check the Balanced power mode.'
     }
 
     @(
         [pscustomobject]@{
             Id            = 'ReviewStartupApps'
-            When          = 'Langer Systemstart oder viele Hintergrundprogramme'
+            When          = 'Slow startup or many background programs'
             Automatic     = $false
             RequiresAdmin = $false
             Steps         = @($startupStep)
         },
         [pscustomobject]@{
             Id            = 'UpdateOrUpgradeWindows'
-            When          = 'Veraltete Windows-Version, fehlende Updates oder ausstehender Neustart'
+            When          = 'An outdated Windows version, missing updates, or a pending restart'
             Automatic     = $false
             RequiresAdmin = $false
             Steps         = @($updateStep)
         },
         [pscustomobject]@{
             Id            = 'RunMalwareScan'
-            When          = 'Unbekannte Prozesse, hohe Dauerlast oder fehlender aktueller Scan'
+            When          = 'Unknown processes, sustained high load, or no recent scan'
             Automatic     = $false
             RequiresAdmin = $false
-            Steps         = @('Den registrierten Virenschutz öffnen und einen Schnellscan starten. Bei einem Fund den Herstelleranweisungen folgen.')
+            Steps         = @('Open the registered antivirus product and start a quick scan. Follow the vendor instructions if it finds anything.')
         },
         [pscustomobject]@{
             Id            = 'OptimizeSystemDrive'
-            When          = 'Mechanische Festplatte oder ausgelassene Windows-Laufwerksoptimierung'
+            When          = 'A mechanical hard drive or skipped Windows drive optimization'
             Automatic     = $false
             RequiresAdmin = $true
-            Steps         = @('Die Windows-Laufwerksoptimierung öffnen. Windows soll selbst zwischen HDD-Defragmentierung und SSD-TRIM wählen.')
+            Steps         = @('Open Windows drive optimization. Let Windows choose between HDD defragmentation and SSD TRIM.')
         },
         [pscustomobject]@{
             Id            = 'ReviewPowerPlan'
-            When          = 'Der PC ist besonders im Netzbetrieb langsam oder verwendet den Energiesparplan'
+            When          = 'The PC is especially slow while plugged in or uses the Power Saver plan'
             Automatic     = $false
             RequiresAdmin = $false
-            Steps         = @($powerStep, 'Auf einem Notebook erhöht ein leistungsstärkerer Modus Stromverbrauch, Wärme und Lüfterlautstärke. Die vorherige Einstellung notieren.')
+            Steps         = @($powerStep, 'On a laptop, a higher-performance mode increases power use, heat, and fan noise. Note the previous setting.')
         },
         [pscustomobject]@{
             Id            = 'ReviewVisualEffects'
-            When          = 'Fensteranimationen und die Oberfläche ruckeln auf älterer Hardware'
+            When          = 'Window animations and the interface stutter on older hardware'
             Automatic     = $false
             RequiresAdmin = $false
-            Steps         = @('SystemPropertiesPerformance.exe öffnen und einzelne visuelle Effekte testweise reduzieren. Die vorherige Auswahl dokumentieren.')
+            Steps         = @('Open SystemPropertiesPerformance.exe and test reducing individual visual effects. Document the previous selection.')
         },
         [pscustomobject]@{
             Id            = 'CleanBootTest'
-            When          = 'Die Last lässt sich keinem einzelnen Prozess zuordnen oder tritt nach der Anmeldung auf'
+            When          = 'The load cannot be linked to a single process or appears after sign-in'
             Automatic     = $false
             RequiresAdmin = $true
-            Steps         = @('msconfig öffnen und zuerst alle Microsoft-Dienste ausblenden.', 'Drittanbieter-Dienste und Autostarts nur für einen Test deaktivieren, neu starten und anschließend schrittweise wieder aktivieren.', 'Nach dem Test den normalen Systemstart wiederherstellen.')
+            Steps         = @('Open msconfig and first hide all Microsoft services.', 'Disable third-party services and startup apps only for a test, restart, then re-enable them gradually.', 'Restore normal startup after the test.')
         },
         [pscustomobject]@{
             Id            = 'RepairSystemFiles'
-            When          = 'Windows-Funktionen, Updates oder Systemdateien sind beschädigt'
+            When          = 'Windows features, updates, or system files are damaged'
             Automatic     = $false
             RequiresAdmin = $true
             Steps         = $repairSteps
         },
         [pscustomobject]@{
             Id            = 'CheckFileSystem'
-            When          = 'Dateisystemfehler, I/O-Fehler oder ein gesetztes Dirty-Bit wurden festgestellt'
+            When          = 'File system errors, I/O errors, or a set dirty bit were found'
             Automatic     = $false
             RequiresAdmin = $true
-            Steps         = @('Wichtige Daten zuerst sichern.', 'CHKDSK nur nach einem konkreten Fehlerbefund und mit passender Option ausführen.')
+            Steps         = @('Back up important data first.', 'Run CHKDSK only after a specific error finding and with the appropriate option.')
         },
         [pscustomobject]@{
             Id            = 'Recovery'
-            When          = 'Die Installation bleibt nach gezielter Diagnose und Reparatur unzuverlässig'
+            When          = 'The installation remains unreliable after targeted diagnosis and repair'
             Automatic     = $false
             RequiresAdmin = $true
-            Steps         = @('Backup und BitLocker-Wiederherstellungsschlüssel prüfen.', 'Danach Systemwiederherstellung, Zurücksetzen oder Neuinstallation beaufsichtigt auswählen.')
+            Steps         = @('Check backups and the BitLocker recovery key.', 'Then choose System Restore, Reset, or reinstallation with supervision.')
         }
     )
 }
@@ -270,39 +270,39 @@ function New-WMDiagnosis {
     $powerPlan = Get-WMFactValue -Facts $Facts -Name 'ActivePowerPlan' -Default ([pscustomobject]@{})
 
     if ($freePercent -lt 10) {
-        $recommendations.Add((New-WMRecommendation -Id 'FreeDiskSpace' -Severity 'High' -Title 'Kritisch wenig freier Speicher auf dem Systemlaufwerk' -Description "Nur $freePercent% Speicherplatz sind frei. Löschen Sie große, nicht benötigte Dateien oder verschieben Sie sie auf ein externes Laufwerk." -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'FreeDiskSpace' -Severity 'High' -Title 'Critically low free space on the system drive' -Description "Only $freePercent% free space is available. Delete large unneeded files or move them to external storage." -ActionType 'Guidance'))
     }
     elseif ($freePercent -lt 15) {
-        $recommendations.Add((New-WMRecommendation -Id 'FreeDiskSpace' -Severity 'Medium' -Title 'Wenig freier Speicher auf dem Systemlaufwerk' -Description "Nur $freePercent% Speicherplatz sind frei. Eine Speicherbereinigung kann Windows spürbar entlasten." -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'FreeDiskSpace' -Severity 'Medium' -Title 'Low free space on the system drive' -Description "Only $freePercent% free space is available. Cleaning up storage may noticeably relieve Windows." -ActionType 'Guidance'))
     }
 
     if ($tempSize -gt 500MB) {
-        $recommendations.Add((New-WMRecommendation -Id 'CleanTempFiles' -Severity 'Low' -Title 'Temporäre Dateien bereinigen' -Description 'Temporäre Dateien des angemeldeten Benutzers können nach ausdrücklicher Bestätigung entfernt werden.' -ActionType 'Remediation'))
+        $recommendations.Add((New-WMRecommendation -Id 'CleanTempFiles' -Severity 'Low' -Title 'Clean temporary files' -Description 'Temporary files for the signed-in user can be removed after explicit confirmation.' -ActionType 'Remediation'))
     }
 
     if ($recycleBinSize -gt 500MB) {
-        $recommendations.Add((New-WMRecommendation -Id 'CleanRecycleBin' -Severity 'Low' -Title 'Papierkorb leeren' -Description 'Der Papierkorb enthält viel Speicher. Das Leeren wird erst nach einer separaten Bestätigung ausgeführt.' -ActionType 'Remediation'))
+        $recommendations.Add((New-WMRecommendation -Id 'CleanRecycleBin' -Severity 'Low' -Title 'Empty Recycle Bin' -Description 'The Recycle Bin uses a large amount of space. It is emptied only after separate confirmation.' -ActionType 'Remediation'))
     }
 
     if ($startupCount -ge 8) {
-        $startupLocation = if ([string](Get-WMFactValue -Facts $Facts -Name 'OperatingSystemVersion' -Default '') -like '6.1*') { 'msconfig und Autostart-Ordner' } else { 'Task-Manager > Autostart' }
-        $recommendations.Add((New-WMRecommendation -Id 'ReviewStartupApps' -Severity 'Medium' -Title 'Autostart-Programme prüfen' -Description "$startupCount Autostart-Einträge wurden gefunden. Öffnen Sie $startupLocation und prüfen Sie Einträge einzeln." -ActionType 'Guidance'))
+        $startupLocation = if ([string](Get-WMFactValue -Facts $Facts -Name 'OperatingSystemVersion' -Default '') -like '6.1*') { 'msconfig and startup folders' } else { 'Task Manager > Startup apps' }
+        $recommendations.Add((New-WMRecommendation -Id 'ReviewStartupApps' -Severity 'Medium' -Title 'Review startup apps' -Description "$startupCount startup entries were found. Open $startupLocation and review entries one at a time." -ActionType 'Guidance'))
     }
 
     if ($restartPending) {
-        $recommendations.Add((New-WMRecommendation -Id 'RestartForPendingUpdates' -Severity 'Medium' -Title 'Windows-Neustart ausstehend' -Description 'Windows signalisiert einen ausstehenden Neustart. Speichern Sie Ihre Arbeit und starten Sie den PC bei Gelegenheit neu.' -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'RestartForPendingUpdates' -Severity 'Medium' -Title 'Windows restart pending' -Description 'Windows reports a pending restart. Save your work and restart the PC when convenient.' -ActionType 'Guidance'))
     }
 
     if ($uptimeDays -ge 14) {
-        $recommendations.Add((New-WMRecommendation -Id 'RestartLongRunningSystem' -Severity 'Low' -Title 'PC läuft seit langer Zeit ohne Neustart' -Description "Der PC läuft seit $uptimeDays Tagen. Ein normaler Neustart kann hängende Hintergrundprozesse und Updates abschließen." -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'RestartLongRunningSystem' -Severity 'Low' -Title 'PC has been running for a long time without restarting' -Description "The PC has been running for $uptimeDays days. A normal restart can finish stalled background processes and updates." -ActionType 'Guidance'))
     }
 
     $lifecycleStatus = [string](Get-WMFactValue -Facts $lifecycle -Name 'Status' -Default 'Unknown')
     if ($lifecycleStatus -eq 'Unsupported') {
-        $recommendations.Add((New-WMRecommendation -Id 'UpgradeUnsupportedWindows' -Severity 'High' -Title 'Windows-Version wird regulär nicht mehr unterstützt' -Description ([string](Get-WMFactValue -Facts $lifecycle -Name 'Message' -Default 'Prüfen Sie ein Upgrade auf eine unterstützte Windows-Version.')) -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'UpgradeUnsupportedWindows' -Severity 'High' -Title 'Windows version is no longer regularly supported' -Description ([string](Get-WMFactValue -Facts $lifecycle -Name 'Message' -Default 'Consider upgrading to a supported Windows version.')) -ActionType 'Guidance'))
     }
     elseif ($lifecycleStatus -eq 'SpecialLifecycle') {
-        $recommendations.Add((New-WMRecommendation -Id 'VerifyWindowsLifecycle' -Severity 'Low' -Title 'Supportende dieser Windows-Ausgabe prüfen' -Description ([string](Get-WMFactValue -Facts $lifecycle -Name 'Message' -Default 'Prüfen Sie Edition und Supportende bei Microsoft.')) -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'VerifyWindowsLifecycle' -Severity 'Low' -Title 'Check end of support for this Windows edition' -Description ([string](Get-WMFactValue -Facts $lifecycle -Name 'Message' -Default 'Check the edition and end-of-support date with Microsoft.')) -ActionType 'Guidance'))
     }
 
     $performanceStatus = [string](Get-WMFactValue -Facts $performance -Name 'Status' -Default 'Unavailable')
@@ -311,54 +311,54 @@ function New-WMDiagnosis {
         $averageDisk = [double](Get-WMFactValue -Facts $performance -Name 'AverageSystemDiskBusyPercent' -Default -1)
         $averageCommit = [double](Get-WMFactValue -Facts $performance -Name 'AverageCommittedPercent' -Default -1)
         if ($averageCpu -ge 80) {
-            $recommendations.Add((New-WMRecommendation -Id 'InvestigateHighCpu' -Severity 'Medium' -Title 'CPU während der Messung stark ausgelastet' -Description "Die mittlere CPU-Auslastung lag bei $averageCpu%. Prüfen Sie die im Bericht aufgeführten CPU-Prozesse, bevor Sie Programme beenden oder entfernen." -ActionType 'Guidance'))
+            $recommendations.Add((New-WMRecommendation -Id 'InvestigateHighCpu' -Severity 'Medium' -Title 'CPU was heavily utilized during sampling' -Description "Average CPU utilization was $averageCpu%. Review the CPU processes listed in the report before ending or removing programs." -ActionType 'Guidance'))
         }
         if ($averageDisk -ge 90) {
-            $recommendations.Add((New-WMRecommendation -Id 'InvestigateHighDiskUsage' -Severity 'Medium' -Title 'Systemlaufwerk während der Messung stark ausgelastet' -Description "Die mittlere Datenträgerauslastung lag bei $averageDisk%. Prüfen Sie I/O-Prozesse, Laufwerkszustand und freien Speicher." -ActionType 'Guidance'))
+            $recommendations.Add((New-WMRecommendation -Id 'InvestigateHighDiskUsage' -Severity 'Medium' -Title 'System drive was heavily utilized during sampling' -Description "Average disk utilization was $averageDisk%. Review I/O processes, drive health, and free space." -ActionType 'Guidance'))
         }
         if ($averageCommit -ge 90) {
-            $recommendations.Add((New-WMRecommendation -Id 'InvestigateMemoryPressure' -Severity 'High' -Title 'Arbeitsspeicher und Commit-Limit nahezu ausgeschöpft' -Description "Die mittlere Commit-Auslastung lag bei $averageCommit%. Prüfen Sie speicherintensive Prozesse, Auslagerungsdatei und eine mögliche RAM-Aufrüstung." -ActionType 'Guidance'))
+            $recommendations.Add((New-WMRecommendation -Id 'InvestigateMemoryPressure' -Severity 'High' -Title 'Memory and commit limit are nearly exhausted' -Description "Average commit utilization was $averageCommit%. Review memory-intensive processes, the paging file, and a possible RAM upgrade." -ActionType 'Guidance'))
         }
     }
 
     $mediaType = [string](Get-WMFactValue -Facts $systemDriveDevice -Name 'MediaType' -Default 'Unknown')
     if ($mediaType -eq 'HDD') {
-        $recommendations.Add((New-WMRecommendation -Id 'ConsiderSsdUpgrade' -Severity 'Medium' -Title 'Windows läuft auf einer mechanischen Festplatte' -Description 'Ein Wechsel des Systemlaufwerks auf eine SSD bringt bei älteren PCs häufig mehr als weitere Software-Tweaks.' -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'ConsiderSsdUpgrade' -Severity 'Medium' -Title 'Windows is running on a mechanical hard drive' -Description 'Moving the system drive to an SSD often helps older PCs more than further software tweaks.' -ActionType 'Guidance'))
     }
 
     $basicDiskStatus = [string](Get-WMFactValue -Facts $systemDriveDevice -Name 'BasicStatus' -Default 'Unknown')
     $physicalDiskHealth = [string](Get-WMFactValue -Facts $systemDriveDevice -Name 'HealthStatus' -Default 'Unknown')
     if (($basicDiskStatus -notin @('', 'OK', 'Unknown')) -or ($physicalDiskHealth -notin @('', 'Healthy', 'Unknown'))) {
-        $recommendations.Add((New-WMRecommendation -Id 'BackUpAndCheckDrive' -Severity 'High' -Title 'Systemlaufwerk meldet einen auffälligen Zustand' -Description "Windows meldet Laufwerksstatus '$basicDiskStatus' und Gesundheitsstatus '$physicalDiskHealth'. Sichern Sie wichtige Daten vor weiteren Reparaturversuchen." -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'BackUpAndCheckDrive' -Severity 'High' -Title 'System drive reports an unusual condition' -Description "Windows reports drive status '$basicDiskStatus' and health status '$physicalDiskHealth'. Back up important data before further repair attempts." -ActionType 'Guidance'))
     }
 
     $pageFileStatus = [string](Get-WMFactValue -Facts $pageFile -Name 'ProbeStatus' -Default 'Unavailable')
     $automaticPageFile = Get-WMFactValue -Facts $pageFile -Name 'AutomaticManaged' -Default $null
     if ($pageFileStatus -eq 'Available' -and $automaticPageFile -eq $false) {
-        $recommendations.Add((New-WMRecommendation -Id 'ReviewPageFileConfiguration' -Severity 'Medium' -Title 'Auslagerungsdatei wird manuell verwaltet' -Description 'Eine pauschal deaktivierte oder zu kleine Auslagerungsdatei kann Einfrieren und Programmfehler verursachen. Prüfen Sie die Einstellung anhand der Commit-Auslastung.' -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'ReviewPageFileConfiguration' -Severity 'Medium' -Title 'Paging file is manually managed' -Description 'A disabled or undersized paging file can cause freezes and application errors. Review the setting based on commit utilization.' -ActionType 'Guidance'))
     }
 
     $antivirusStatus = [string](Get-WMFactValue -Facts $antivirus -Name 'ProbeStatus' -Default 'Unavailable')
     $antivirusProductCount = [int](Get-WMFactValue -Facts $antivirus -Name 'ProductCount' -Default -1)
     if ($antivirusStatus -eq 'Available' -and $antivirusProductCount -eq 0) {
-        $recommendations.Add((New-WMRecommendation -Id 'EnableAntivirusProtection' -Severity 'High' -Title 'Kein registrierter Virenschutz gefunden' -Description 'Prüfen Sie den Virenschutz und führen Sie auf einem unterstützten Windows einen aktuellen Scan aus.' -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'EnableAntivirusProtection' -Severity 'High' -Title 'No registered antivirus protection found' -Description 'Check antivirus protection and run a current scan on a supported Windows version.' -ActionType 'Guidance'))
     }
 
     $defenderEnabled = Get-WMFactValue -Facts $antivirus -Name 'DefenderEnabled' -Default $null
     $defenderRealtime = Get-WMFactValue -Facts $antivirus -Name 'DefenderRealTimeProtection' -Default $null
     if ($defenderEnabled -eq $true -and $defenderRealtime -eq $false) {
-        $recommendations.Add((New-WMRecommendation -Id 'RestoreRealtimeProtection' -Severity 'High' -Title 'Microsoft Defender ist aktiv, Echtzeitschutz aber ausgeschaltet' -Description 'Öffnen Sie Windows-Sicherheit und prüfen Sie, warum der Echtzeitschutz deaktiviert ist.' -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'RestoreRealtimeProtection' -Severity 'High' -Title 'Microsoft Defender is enabled, but real-time protection is off' -Description 'Open Windows Security and review why real-time protection is disabled.' -ActionType 'Guidance'))
     }
 
     $lastHotFixAgeDays = [int](Get-WMFactValue -Facts $updates -Name 'LastHotFixAgeDays' -Default -1)
     if ($lifecycleStatus -ne 'Unsupported' -and $lastHotFixAgeDays -ge 90) {
-        $recommendations.Add((New-WMRecommendation -Id 'CheckWindowsUpdates' -Severity 'Medium' -Title 'Seit längerer Zeit kein installierter Windows-Hotfix erkannt' -Description "Der letzte erkannte Hotfix ist $lastHotFixAgeDays Tage alt. Öffnen Sie Windows Update und prüfen Sie den aktuellen Stand." -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'CheckWindowsUpdates' -Severity 'Medium' -Title 'No installed Windows hotfix detected for a long time' -Description "The last detected hotfix is $lastHotFixAgeDays days old. Open Windows Update and check the current status." -ActionType 'Guidance'))
     }
 
     $powerPlanStatus = [string](Get-WMFactValue -Facts $powerPlan -Name 'ProbeStatus' -Default 'Unavailable')
     $powerPlanGuid = [string](Get-WMFactValue -Facts $powerPlan -Name 'Guid' -Default '')
     if ($powerPlanStatus -in @('Available', 'Partial') -and $powerPlanGuid -eq 'a1841308-3541-4fab-bc81-f71556f20b4a') {
-        $recommendations.Add((New-WMRecommendation -Id 'ReviewPowerPlan' -Severity 'Low' -Title 'Energiesparplan ist aktiv' -Description 'Wenn der PC auch im Netzbetrieb unerwartet langsam ist, prüfen Sie den Energiemodus. Ein leistungsstärkerer Modus erhöht Stromverbrauch und Wärme.' -ActionType 'Guidance'))
+        $recommendations.Add((New-WMRecommendation -Id 'ReviewPowerPlan' -Severity 'Low' -Title 'Power Saver plan is active' -Description 'If the PC is unexpectedly slow while plugged in, review the power mode. A higher-performance mode increases power use and heat.' -ActionType 'Guidance'))
     }
 
     $overallHealth = 'Healthy'
@@ -423,8 +423,8 @@ function Get-WMSafeRemediationPlan {
             RequiresConfirmation = $true
             Automation           = 'Allowed'
             EstimatedBytes       = $tempSize
-            Title                = 'Temporäre Dateien des angemeldeten Benutzers bereinigen'
-            Scope                = 'Nur der Temp-Ordner des aktuell angemeldeten Benutzers'
+            Title                = 'Clean temporary files for the signed-in user'
+            Scope                = 'Only the temp folder of the currently signed-in user'
         })
     }
 
@@ -435,8 +435,8 @@ function Get-WMSafeRemediationPlan {
             RequiresConfirmation = $true
             Automation           = 'Allowed'
             EstimatedBytes       = $recycleBinSize
-            Title                = 'Papierkorb des aktuellen Benutzers leeren'
-            Scope                = 'Papierkorb auf lokalen Laufwerken; Dateien können danach nicht über den Papierkorb wiederhergestellt werden'
+            Title                = "Empty the current user's Recycle Bin"
+            Scope                = 'Recycle Bin on local drives; files cannot be restored through the Recycle Bin afterward'
         })
     }
 
@@ -523,8 +523,8 @@ function Invoke-WMSafeRemediation {
     )
 
     if ($Id -eq 'CleanRecycleBin') {
-        $operation = 'Leert den Papierkorb auf lokalen Laufwerken'
-        if (-not $PSCmdlet.ShouldProcess('Papierkorb des aktuellen Benutzers', $operation)) {
+        $operation = 'Empties the Recycle Bin on local drives'
+        if (-not $PSCmdlet.ShouldProcess("current user's Recycle Bin", $operation)) {
             return [pscustomobject]@{ ActionId = $Id; Status = 'WhatIf'; Removed = 0; Failed = 0 }
         }
         try {
@@ -545,7 +545,7 @@ function Invoke-WMSafeRemediation {
     }
 
     $preview = Get-WMCleanupPreview -Path $tempPath
-    $operation = "Entfernt $($preview.FileCount) Dateien ($($preview.TotalBytes) Bytes) aus dem temporären Ordner"
+    $operation = "Removes $($preview.FileCount) files ($($preview.TotalBytes) bytes) from the temporary folder"
     if (-not $PSCmdlet.ShouldProcess($preview.Path, $operation)) {
         return [pscustomobject]@{
             ActionId = $Id

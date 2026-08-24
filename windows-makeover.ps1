@@ -1,17 +1,17 @@
 ﻿#requires -Version 5.1
 <#!
 .SYNOPSIS
-  Erstellt eine Windows-Diagnose oder führt ausdrücklich bestätigte, risikoarme Bereinigungen aus.
+  Creates a Windows diagnosis or runs explicitly confirmed, low-risk cleanup actions.
 
 .DESCRIPTION
-  Diagnose ist rein lesend. Remediate akzeptiert einen lokalen Diagnosebericht,
-  zeigt den Umfang jeder Aktion und führt keine Maßnahme ohne Bestätigung aus.
+  Diagnosis is read-only. Remediate accepts a local diagnostic report,
+  shows each action's scope and runs no action without confirmation.
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('Diagnose', 'Remediate')]
-    [string]$Mode = 'Diagnose',
+    [ValidateSet('Diagnosis', 'Remediate')]
+    [string]$Mode = 'Diagnosis',
 
     [string]$ReportPath,
 
@@ -33,7 +33,7 @@ Import-Module $modulePath -Force
 
 function Assert-WindowsHost {
     if ($env:OS -ne 'Windows_NT') {
-        throw 'windows-makeover muss auf einem Windows-PC ausgeführt werden.'
+        throw 'windows-makeover must be run on a Windows PC.'
     }
 }
 
@@ -50,7 +50,7 @@ function Format-WMPercentage {
     param($Value)
 
     if ($null -eq $Value) {
-        return 'unbekannt'
+        return 'unknown'
     }
     return ('{0:N1}%' -f [double]$Value)
 }
@@ -465,53 +465,53 @@ function Show-WMReportSummary {
     }
 
     Write-Host ''
-    Write-Host "Windows Makeover $script:WMToolVersion - Diagnose" -ForegroundColor Cyan
+    Write-Host "Windows Makeover $script:WMToolVersion - Diagnosis" -ForegroundColor Cyan
     Write-Host "PC: $($facts.ComputerName) | $($facts.OperatingSystem)"
     Write-Host "Version: $($facts.DisplayVersion) | Edition: $($facts.EditionId)"
     Write-Host "Gesamtstatus: $($Report.OverallHealth)" -ForegroundColor $statusColor
     Write-Host ''
-    Write-Host 'Übersicht' -ForegroundColor Cyan
-    Write-Host ("  Systemlaufwerk: {0} frei von {1} ({2})" -f (Format-WMByteSize $facts.SystemDriveFreeBytes), (Format-WMByteSize $facts.SystemDriveTotalBytes), (Format-WMPercentage $facts.SystemDriveFreePercent))
-    Write-Host ("  Temporäre Dateien: {0} in {1} Dateien" -f (Format-WMByteSize $facts.TempSizeBytes), $facts.TempFileCount)
-    Write-Host ("  Papierkorb: {0}" -f (Format-WMByteSize $facts.RecycleBinSizeBytes))
-    Write-Host "  Autostart-Einträge: $($facts.StartupApplicationCount)"
-    Write-Host "  Verfügbarer Arbeitsspeicher: $($facts.MemoryAvailableGiB) GiB ($(Format-WMPercentage $facts.MemoryAvailablePercent))"
-    Write-Host "  Letzter Neustart: vor $($facts.UptimeDays) Tagen"
+    Write-Host 'Summary' -ForegroundColor Cyan
+    Write-Host ("  System drive: {0} free of {1} ({2})" -f (Format-WMByteSize $facts.SystemDriveFreeBytes), (Format-WMByteSize $facts.SystemDriveTotalBytes), (Format-WMPercentage $facts.SystemDriveFreePercent))
+    Write-Host ("  Temporary files: {0} in {1} files" -f (Format-WMByteSize $facts.TempSizeBytes), $facts.TempFileCount)
+    Write-Host ("  Recycle Bin: {0}" -f (Format-WMByteSize $facts.RecycleBinSizeBytes))
+    Write-Host "  Startup entries: $($facts.StartupApplicationCount)"
+    Write-Host "  Available memory: $($facts.MemoryAvailableGiB) GiB ($(Format-WMPercentage $facts.MemoryAvailablePercent))"
+    Write-Host "  Last restart: $($facts.UptimeDays) days ago"
 
     if ($facts.Lifecycle.Status -ne 'Unknown') {
-        Write-Host "  Windows-Support: $($facts.Lifecycle.Status)"
+        Write-Host "  Windows support: $($facts.Lifecycle.Status)"
     }
     if ($facts.SystemDriveDevice.ProbeStatus -eq 'Available') {
-        Write-Host "  Systemdatenträger: $($facts.SystemDriveDevice.MediaType), $($facts.SystemDriveDevice.Model), Zustand $($facts.SystemDriveDevice.BasicStatus)/$($facts.SystemDriveDevice.HealthStatus)"
+        Write-Host "  System drive: $($facts.SystemDriveDevice.MediaType), $($facts.SystemDriveDevice.Model), status $($facts.SystemDriveDevice.BasicStatus)/$($facts.SystemDriveDevice.HealthStatus)"
     }
     if ($facts.PerformanceSample.Status -in @('Available', 'Partial')) {
-        Write-Host "  Kurzprobe: CPU $($facts.PerformanceSample.AverageCpuPercent)%, Datenträger $($facts.PerformanceSample.AverageSystemDiskBusyPercent)%, Commit $($facts.PerformanceSample.AverageCommittedPercent)%"
+        Write-Host "  Short sample: CPU $($facts.PerformanceSample.AverageCpuPercent)%, disk $($facts.PerformanceSample.AverageSystemDiskBusyPercent)%, commit $($facts.PerformanceSample.AverageCommittedPercent)%"
     }
     elseif ($facts.PerformanceSample.Status -eq 'Skipped') {
-        Write-Host '  Kurzprobe: übersprungen'
+        Write-Host '  Short sample: skipped'
     }
     if ($facts.PageFile.ProbeStatus -eq 'Available') {
-        Write-Host "  Auslagerungsdatei: automatisch verwaltet = $($facts.PageFile.AutomaticManaged), zugewiesen $($facts.PageFile.AllocatedSizeMiB) MiB"
+        Write-Host "  Paging file: automatically managed = $($facts.PageFile.AutomaticManaged), allocated $($facts.PageFile.AllocatedSizeMiB) MiB"
     }
     if ($facts.ActivePowerPlan.ProbeStatus -in @('Available', 'Partial')) {
         $powerPlanLabel = if (-not [string]::IsNullOrWhiteSpace([string]$facts.ActivePowerPlan.Name)) { $facts.ActivePowerPlan.Name } else { $facts.ActivePowerPlan.Guid }
-        Write-Host "  Energiesparplan: $powerPlanLabel"
+        Write-Host "  Power plan: $powerPlanLabel"
     }
     if ($facts.Antivirus.ProbeStatus -eq 'Available') {
-        $antivirusNames = if (@($facts.Antivirus.ProductNames).Count) { @($facts.Antivirus.ProductNames) -join ', ' } else { 'keiner registriert' }
-        Write-Host "  Virenschutz: $antivirusNames"
+        $antivirusNames = if (@($facts.Antivirus.ProductNames).Count) { @($facts.Antivirus.ProductNames) -join ', ' } else { 'none registered' }
+        Write-Host "  Antivirus: $antivirusNames"
     }
     if ($facts.Updates.ProbeStatus -eq 'Available' -and $null -ne $facts.Updates.LastHotFixAgeDays) {
-        Write-Host "  Letzter erkannter Hotfix: $($facts.Updates.LastHotFixId), vor $($facts.Updates.LastHotFixAgeDays) Tagen"
+        Write-Host "  Last detected hotfix: $($facts.Updates.LastHotFixId), $($facts.Updates.LastHotFixAgeDays) days ago"
     }
 
     if (@($Report.Recommendations).Count -eq 0) {
         Write-Host ''
-        Write-Host 'Keine auffälligen, automatisch geprüften Punkte gefunden.' -ForegroundColor Green
+        Write-Host 'No notable issues were found in the automated checks.' -ForegroundColor Green
     }
     else {
         Write-Host ''
-        Write-Host 'Empfehlungen' -ForegroundColor Cyan
+        Write-Host 'Recommendations' -ForegroundColor Cyan
         foreach ($recommendation in $Report.Recommendations) {
             Write-Host ("  [{0}] {1}" -f $recommendation.Severity, $recommendation.Title)
             Write-Host ("        {0}" -f $recommendation.Description)
@@ -520,13 +520,13 @@ function Show-WMReportSummary {
 
     if (@($facts.PerformanceSample.TopCpuProcesses).Count -gt 0) {
         Write-Host ''
-        Write-Host 'CPU-Prozesse am Ende der Kurzprobe' -ForegroundColor Cyan
+        Write-Host 'CPU processes at the end of the short sample' -ForegroundColor Cyan
         $facts.PerformanceSample.TopCpuProcesses | Format-Table Name, Id, CpuPercent -AutoSize
     }
 
     if (@($facts.PerformanceSample.TopIoProcesses).Count -gt 0) {
         Write-Host ''
-        Write-Host 'I/O-Prozesse am Ende der Kurzprobe' -ForegroundColor Cyan
+        Write-Host 'I/O processes at the end of the short sample' -ForegroundColor Cyan
         $facts.PerformanceSample.TopIoProcesses |
             Select-Object Name, Id, @{ Name = 'I/O pro Sekunde'; Expression = { Format-WMByteSize $_.IoBytesPerSecond } } |
             Format-Table -AutoSize
@@ -534,19 +534,19 @@ function Show-WMReportSummary {
 
     if (@($facts.TopMemoryProcesses).Count -gt 0) {
         Write-Host ''
-        Write-Host 'Größte aktuell sichtbare Arbeitsspeicher-Nutzung' -ForegroundColor Cyan
+        Write-Host 'Largest currently visible memory usage' -ForegroundColor Cyan
         $facts.TopMemoryProcesses |
-            Select-Object Name, Id, @{ Name = 'Arbeitsspeicher'; Expression = { Format-WMByteSize $_.MemoryBytes } } |
+            Select-Object Name, Id, @{ Name = 'Memory'; Expression = { Format-WMByteSize $_.MemoryBytes } } |
             Format-Table -AutoSize
     }
 
     Write-Host ''
-    Write-Host 'Der JSON-Bericht enthält außerdem einen manuellen, versionsabhängigen Prüf- und Reparaturleitfaden.'
+    Write-Host 'The JSON report also contains a manual, version-specific review and repair playbook.'
 }
 
 Assert-WindowsHost
 
-if ($Mode -eq 'Diagnose') {
+if ($Mode -eq 'Diagnosis') {
     $facts = Get-WMHostFacts -PerformanceSampleSeconds $SampleSeconds
     $report = New-WMDiagnosis -Facts $facts
     $defaultPath = Join-Path $PSScriptRoot (Join-Path 'reports' ("diagnosis-{0}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss')))
@@ -556,15 +556,15 @@ if ($Mode -eq 'Diagnose') {
     Show-WMReportSummary -Report $report
     Write-Host ''
     Write-Host "Diagnosebericht gespeichert: $savedPath" -ForegroundColor Green
-    Write-Host 'Nächster Schritt: Remediate mit genau diesem Bericht starten.'
+    Write-Host 'Next step: start Remediate with this exact report.'
     return
 }
 
 if (-not $ReportPath) {
-    throw 'Für Remediate ist -ReportPath zu einem zuvor erzeugten Diagnosebericht erforderlich.'
+    throw 'Remediate requires -ReportPath for a previously generated diagnostic report.'
 }
 if (-not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
-    throw "Diagnosebericht nicht gefunden: $ReportPath"
+    throw "Diagnostic report not found: $ReportPath"
 }
 
 $report = Get-Content -LiteralPath $ReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -572,13 +572,13 @@ $resolvedReportPath = (Resolve-Path -LiteralPath $ReportPath).Path
 $currentUserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $reportValidation = Test-WMDiagnosticReport -Report $report -ComputerName $env:COMPUTERNAME -UserSid $currentUserSid -TempPath $env:TEMP
 if (-not $reportValidation.IsValid) {
-    throw ("Der Diagnosebericht kann nicht für Bereinigungen verwendet werden: " + ($reportValidation.Reasons -join ' '))
+    throw ("The diagnostic report cannot be used for cleanup: " + ($reportValidation.Reasons -join ' '))
 }
 $auditDirectory = Split-Path -Path $resolvedReportPath -Parent
 $auditPath = Join-Path -Path $auditDirectory -ChildPath ("remediation-audit-{0}.jsonl" -f (Get-Date -Format 'yyyyMMdd'))
 
-# Größen und Schwellenwerte werden direkt vor der Auswahl erneut geprüft.
-# Empfehlungen und Messwerte aus der JSON-Datei steuern keine Löschaktion.
+# Sizes and thresholds are measured again directly before selection.
+# Recommendations and measurements from the JSON file do not control a deletion action.
 $currentTempPreview = Get-WMCleanupPreview -Path $env:TEMP
 $currentCleanupReport = [pscustomobject]@{
     SchemaVersion = $report.SchemaVersion
@@ -593,21 +593,21 @@ if ($Action) {
 }
 
 if ($plan.Count -eq 0) {
-    Write-Host 'Für diesen Bericht gibt es keine automatisch erlaubte Maßnahme.' -ForegroundColor Yellow
+    Write-Host 'There are no automatically allowed actions for this report.' -ForegroundColor Yellow
     return
 }
 
 Write-Host ''
-Write-Host 'Folgende risikoarme Maßnahmen stehen zur Auswahl:' -ForegroundColor Cyan
+Write-Host 'The following low-risk actions are available:' -ForegroundColor Cyan
 $plan |
-    Select-Object Id, Risk, @{ Name = 'Geschätzter Speichergewinn'; Expression = { Format-WMByteSize $_.EstimatedBytes } }, Scope |
+    Select-Object Id, Risk, @{ Name = 'Estimated space recovery'; Expression = { Format-WMByteSize $_.EstimatedBytes } }, Scope |
     Format-Table -AutoSize
 
 foreach ($step in $plan) {
     if (-not $Force -and -not $WhatIfPreference) {
-        $answer = Read-Host "'$($step.Title)' ausführen? (J/N)"
-        if ($answer -notmatch '^[JjYy]$') {
-            Write-Host "Übersprungen: $($step.Id)"
+        $answer = Read-Host "Run '$($step.Title)'? (Y/N)"
+        if ($answer -notmatch '^[Yy]$') {
+            Write-Host "Skipped: $($step.Id)"
             continue
         }
     }
@@ -619,16 +619,16 @@ foreach ($step in $plan) {
         'CleanRecycleBin' {
             $result = Invoke-WMSafeRemediation -Id $step.Id -Confirm:$false -WhatIf:$WhatIfPreference
         }
-        default { throw "Nicht unterstützte Aktion im Plan: $($step.Id)" }
+        default { throw "Unsupported action in the plan: $($step.Id)" }
     }
 
     if ($result.Status -ne 'WhatIf') {
         try {
             Save-WMRemediationAuditEntry -Result $result -ReportPath $resolvedReportPath -Path $auditPath | Out-Null
-            Write-Host "Audit-Protokoll aktualisiert: $auditPath" -ForegroundColor DarkGray
+            Write-Host "Audit log updated: $auditPath" -ForegroundColor DarkGray
         }
         catch {
-            Write-Warning "Bereinigung wurde ausgeführt, aber das Audit-Protokoll konnte nicht geschrieben werden: $($_.Exception.Message)"
+            Write-Warning "Cleanup ran, but the audit log could not be written: $($_.Exception.Message)"
         }
     }
 
@@ -636,6 +636,6 @@ foreach ($step in $plan) {
         Write-Host "$($result.ActionId): $($result.Status)"
     }
     else {
-        Write-Host "$($result.ActionId): $($result.Status); entfernte Dateien: $($result.Removed); Fehler: $($result.Failed)"
+        Write-Host "$($result.ActionId): $($result.Status); removed files: $($result.Removed); failures: $($result.Failed)"
     }
 }

@@ -5,7 +5,7 @@
 }
 
 Describe 'New-WMDiagnosis' {
-    It 'empfiehlt Speicherbereinigung bei kritisch wenig freiem Systemlaufwerk' {
+    It 'recommends cleanup for critically low system-drive free space' {
         $facts = [pscustomobject]@{
             SystemDriveFreePercent = 8
             TempSizeBytes          = 2GB
@@ -21,7 +21,7 @@ Describe 'New-WMDiagnosis' {
         $report.Recommendations.Id | Should -Contain 'FreeDiskSpace'
     }
 
-    It 'weist auf viele Autostart-Programme und einen ausstehenden Neustart hin' {
+    It 'reports many startup apps and a pending restart' {
         $facts = [pscustomobject]@{
             SystemDriveFreePercent  = 55
             TempSizeBytes           = 10MB
@@ -35,7 +35,7 @@ Describe 'New-WMDiagnosis' {
         $report.Recommendations.Id | Should -Contain 'RestartForPendingUpdates'
     }
 
-    It 'erkennt typische CPU-, Datenträger-, Speicher- und Sicherheitsbremsen' {
+    It 'detects typical CPU, disk, memory, and security bottlenecks' {
         $facts = [pscustomobject]@{
             OperatingSystemVersion  = '10.0.26100'
             SystemDriveFreePercent  = 55
@@ -71,7 +71,7 @@ Describe 'New-WMDiagnosis' {
         $report.Recommendations.Id | Should -Contain 'ReviewPowerPlan'
     }
 
-    It 'hält riskantere Reparaturschritte im manuellen Leitfaden' {
+    It 'keeps riskier repair steps in the manual playbook' {
         $facts = [pscustomobject]@{
             OperatingSystemVersion = '6.1.7601'
             Lifecycle = [pscustomobject]@{ Status = 'Unsupported' }
@@ -90,19 +90,19 @@ Describe 'New-WMDiagnosis' {
 }
 
 Describe 'Get-WMWindowsLifecycle' {
-    It 'markiert Windows 7 und normales Windows 10 als nicht mehr regulär unterstützt' {
+    It 'marks Windows 7 and regular Windows 10 as no longer regularly supported' {
         (Get-WMWindowsLifecycle -Version '6.1.7601' -Caption 'Microsoft Windows 7 Professional').Status | Should -Be 'Unsupported'
         (Get-WMWindowsLifecycle -Version '10.0.19045' -Caption 'Microsoft Windows 10 Pro' -EditionId 'Professional').Status | Should -Be 'Unsupported'
     }
 
-    It 'behandelt LTSC getrennt und Windows 11 versionsabhängig' {
+    It 'handles LTSC separately and Windows 11 by version' {
         (Get-WMWindowsLifecycle -Version '10.0.19044' -Caption 'Microsoft Windows 10 Enterprise LTSC' -EditionId 'EnterpriseS').Status | Should -Be 'SpecialLifecycle'
         (Get-WMWindowsLifecycle -Version '10.0.26100' -Caption 'Microsoft Windows 11 Pro' -EditionId 'Professional').Status | Should -Be 'VersionSpecific'
     }
 }
 
 Describe 'Get-WMSafeRemediationPlan' {
-    It 'markiert die Temp-Bereinigung als einzeln zu bestätigende Aktion mit Größenangabe' {
+    It 'marks temp cleanup as an individually confirmed action with a size estimate' {
         $report = [pscustomobject]@{
             SchemaVersion = '1.3'
             Facts = [pscustomobject]@{ TempSizeBytes = 2GB; RecycleBinSizeBytes = 0 }
@@ -121,7 +121,7 @@ Describe 'Get-WMSafeRemediationPlan' {
         $plan[0].EstimatedBytes | Should -Be 2GB
     }
 
-    It 'bietet den Papierkorb nur als bestätigte, risikoarme Maßnahme an' {
+    It 'offers the Recycle Bin only as a confirmed low-risk action' {
         $report = [pscustomobject]@{
             SchemaVersion = '1.3'
             Facts = [pscustomobject]@{ TempSizeBytes = 0; RecycleBinSizeBytes = 3GB }
@@ -138,13 +138,13 @@ Describe 'Get-WMSafeRemediationPlan' {
         $plan[0].EstimatedBytes | Should -Be 3GB
     }
 
-    It 'lehnt unbekannte Berichtsformate ab' {
+    It 'rejects unknown report schemas' {
         $report = [pscustomobject]@{ SchemaVersion = '9.9'; Facts = [pscustomobject]@{}; Recommendations = @() }
 
         { Get-WMSafeRemediationPlan -Report $report } | Should -Throw '*Unsupported diagnostic report schema*'
     }
 
-    It 'ignoriert eingeschleuste Aktions-IDs unterhalb der Größenschwelle' {
+    It 'ignores injected action IDs below the size threshold' {
         $report = [pscustomobject]@{
             SchemaVersion = '1.3'
             Facts = [pscustomobject]@{ TempSizeBytes = 0; RecycleBinSizeBytes = 0 }
@@ -158,7 +158,7 @@ Describe 'Get-WMSafeRemediationPlan' {
 }
 
 Describe 'Test-WMDiagnosticReport' {
-    It 'akzeptiert einen aktuellen Bericht des gleichen PCs' {
+    It 'accepts a recent report from the same PC' {
         $report = [pscustomobject]@{
             SchemaVersion = '1.3'
             GeneratedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -174,7 +174,7 @@ Describe 'Test-WMDiagnosticReport' {
         $validation.IsValid | Should -BeTrue
     }
 
-    It 'lehnt einen alten oder fremden Bericht ab' {
+    It 'rejects an old or foreign report' {
         $report = [pscustomobject]@{
             SchemaVersion = '1.3'
             GeneratedAt = [DateTimeOffset]::UtcNow.AddDays(-31).ToString('o')
@@ -192,7 +192,7 @@ Describe 'Test-WMDiagnosticReport' {
         $validation.Reasons | Should -Contain 'Report is older than the allowed age.'
     }
 
-    It 'lehnt fehlende Benutzerbindung und einen zukünftigen Zeitstempel ab' {
+    It 'rejects missing user binding and a future timestamp' {
         $report = [pscustomobject]@{
             SchemaVersion = '1.3'
             GeneratedAt = [DateTimeOffset]::UtcNow.AddHours(1).ToString('o')
@@ -210,7 +210,7 @@ Describe 'Test-WMDiagnosticReport' {
         $validation.Reasons | Should -Contain 'Report generation timestamp is in the future.'
     }
 
-    It 'lehnt Berichte eines anderen Windows-Benutzers oder Temp-Bereichs ab' {
+    It 'rejects reports from another Windows user or temp scope' {
         $report = [pscustomobject]@{
             SchemaVersion = '1.3'
             GeneratedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -230,7 +230,7 @@ Describe 'Test-WMDiagnosticReport' {
 }
 
 Describe 'Get-WMCleanupPreview' {
-    It 'zählt nur Dateien und summiert deren Größe ohne etwas zu verändern' {
+    It 'counts only files and sums their size without changing anything' {
         Set-Content -LiteralPath (Join-Path $TestDrive 'one.tmp') -Value 'abc' -NoNewline
         $folder = Join-Path $TestDrive 'nested'
         New-Item -ItemType Directory -Path $folder | Out-Null
@@ -245,7 +245,7 @@ Describe 'Get-WMCleanupPreview' {
 }
 
 Describe 'Invoke-WMSafeRemediation' {
-    It 'löscht bei WhatIf keine temporären Dateien' {
+    It 'does not delete temporary files under WhatIf' {
         $temporaryFile = Join-Path $TestDrive 'keep-me.tmp'
         Set-Content -LiteralPath $temporaryFile -Value 'test data'
 
@@ -263,24 +263,24 @@ Describe 'Invoke-WMSafeRemediation' {
         $result.ActionId | Should -Be 'CleanTempFiles'
     }
 
-    It 'bietet keinen frei wählbaren Löschpfad an' {
+    It 'does not offer an arbitrary deletion path' {
         (Get-Command Invoke-WMSafeRemediation).Parameters.Keys | Should -Not -Contain 'TempPath'
     }
 }
 
 Describe 'Get-WMSafePercentage' {
-    It 'liefert bei einem positiven Nenner den gerundeten Prozentwert' {
+    It 'returns the rounded percentage for a positive denominator' {
         Get-WMSafePercentage -Numerator 25 -Denominator 200 | Should -Be 12.5
     }
 
-    It 'liefert bei null oder negativem Nenner keinen irreführenden Wert' {
+    It 'returns no misleading value for a zero or negative denominator' {
         Get-WMSafePercentage -Numerator 25 -Denominator 0 | Should -BeNullOrEmpty
         Get-WMSafePercentage -Numerator 25 -Denominator (-1) | Should -BeNullOrEmpty
     }
 }
 
 Describe 'Save-WMRemediationAuditEntry' {
-    It 'schreibt eine eigenständige JSONL-Zeile mit dem Ergebnis der Bereinigung' {
+    It 'writes a standalone JSONL line with the cleanup result' {
         $path = Join-Path $TestDrive 'remediation-audit.jsonl'
         $result = [pscustomobject]@{
             ActionId = 'CleanTempFiles'
@@ -303,7 +303,7 @@ Describe 'Save-WMRemediationAuditEntry' {
 }
 
 Describe 'Save-WMDiagnosticReport' {
-    It 'speichert einen maschinenlesbaren Diagnosebericht als JSON' {
+    It 'saves a machine-readable diagnostic report as JSON' {
         $report = [pscustomobject]@{
             SchemaVersion = '1.3'
             OverallHealth = 'Healthy'
@@ -320,7 +320,7 @@ Describe 'Save-WMDiagnosticReport' {
 }
 
 Describe 'New-WMReleaseAssets' {
-    It 'erstellt ein eigenständiges Skript, ein vollständiges ZIP und Prüfsummen' {
+    It 'creates a standalone script, a complete ZIP, and checksums' {
         $projectRoot = Split-Path -Path $PSScriptRoot -Parent
         $builderPath = Join-Path $projectRoot 'build\New-WMReleaseAssets.ps1'
         $outputPath = Join-Path $TestDrive 'release'
@@ -358,7 +358,7 @@ Describe 'New-WMReleaseAssets' {
 }
 
 Describe 'windows-makeover entry point' {
-    It 'ist als fehlerfreies PowerShell-Skript vorhanden' {
+    It 'exists as a syntactically valid PowerShell script' {
         $projectRoot = Split-Path -Path $PSScriptRoot -Parent
         $scriptPath = Join-Path $projectRoot 'windows-makeover.ps1'
         Test-Path -LiteralPath $scriptPath | Should -BeTrue
@@ -376,7 +376,7 @@ Describe 'windows-makeover entry point' {
 }
 
 Describe 'PowerShell source encoding' {
-    It 'speichert alle PowerShell-Dateien als UTF-8 mit BOM' {
+    It 'stores all PowerShell files as UTF-8 with BOM' {
         $projectRoot = Split-Path -Path $PSScriptRoot -Parent
         $sourceFiles = @(
             (Join-Path $projectRoot 'windows-makeover.ps1'),

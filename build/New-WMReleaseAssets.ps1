@@ -1,12 +1,12 @@
 ﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-  Erstellt die Release-Dateien für Windows Makeover.
+  Creates the release files for Windows Makeover.
 
 .DESCRIPTION
-  Erzeugt ein eigenständiges PowerShell-Skript, ein vollständiges ZIP-Paket
-  und eine SHA-256-Prüfsummendatei. Die deklarierte Tool-Version muss mit der
-  angeforderten Release-Version übereinstimmen.
+  Creates a standalone PowerShell script, a complete ZIP package,
+  and a SHA-256 checksum file. The declared tool version must match the
+  requested release version.
 #>
 [CmdletBinding()]
 param(
