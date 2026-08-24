@@ -32,7 +32,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:WMToolVersion = '0.3.1-dev'
+$script:WMToolVersion = '0.3.1'
 
 $modulePath = Join-Path $PSScriptRoot 'src\WindowsMakeover.psm1'
 Import-Module $modulePath -Force

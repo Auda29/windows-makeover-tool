@@ -1,4 +1,4 @@
-﻿# Windows Makeover 0.3.1-dev
+﻿# Windows Makeover 0.3.1
 
 A cautious PowerShell tool for first-line troubleshooting on slow Windows PCs. It is designed for helping family and friends: diagnose transparently first, then offer only clearly scoped actions.
 
@@ -41,7 +41,7 @@ Before presenting actions, the tool measures the temp folder and Recycle Bin aga
 | `CleanTempFiles` | More than 500 MB in the user's temp folder | Deletes only files in the current user's temp folder, then removes empty subdirectories while preserving the temp root. Locked files or directories are skipped and counted as failures. |
 | `CleanRecycleBin` | More than 500 MB in the Recycle Bin | Enumerates local fixed drives and empties the current user's Recycle Bin on each one explicitly. Files cannot be restored through the Recycle Bin afterward. The Windows API does not provide a reliable removed-item count, so the result reports `RemovedKnown = false` instead of a sentinel value. |
 
-Startup apps, updates, antivirus, paging file, power plan, visual effects, clean boot, drive optimization, system repair, recovery, personal folders, and browser caches are reported only as **guidance** or manual review steps. The tool does not change them automatically. In particular, `0.3.0` adds no browser-cache or personal-file deletion action.
+Startup apps, updates, antivirus, paging file, power plan, visual effects, clean boot, drive optimization, system repair, recovery, personal folders, and browser caches are reported only as **guidance** or manual review steps. The tool does not change them automatically. In particular, `0.3.1` adds no browser-cache or personal-file deletion action.
 
 Every cleanup action that actually starts is also recorded next to the diagnostic report as `remediation-audit-YYYYMMDD.jsonl`. Each line includes a timestamp, the report used, the action, its result, and removed and failed items. A `-WhatIf` run deliberately creates no audit entry because no cleanup is performed.
 
@@ -166,16 +166,16 @@ Invoke-Pester .\tests\WindowsMakeover.Tests.ps1 -Output Detailed
 
 ## Releases
 
-A tag such as `v0.3.0` starts the release workflow. It tests the tag on Windows PowerShell 5.1 and PowerShell 7, then publishes three files:
+A tag such as `v0.3.1` starts the release workflow. It tests the tag on Windows PowerShell 5.1 and PowerShell 7, then publishes three files:
 
-- `windows-makeover-0.3.0.ps1` is the standalone script without an external module.
-- `windows-makeover-0.3.0.zip` contains the regular entry script, module, and README.
+- `windows-makeover-0.3.1.ps1` is the standalone script without an external module.
+- `windows-makeover-0.3.1.zip` contains the regular entry script, module, and README.
 - `SHA256SUMS.txt` contains SHA-256 checksums for both downloads.
 
 Compare a download's checksum on Windows with:
 
 ```powershell
-Get-FileHash .\windows-makeover-0.3.0.ps1 -Algorithm SHA256
+Get-FileHash .\windows-makeover-0.3.1.ps1 -Algorithm SHA256
 ```
 
 The workflow can also be triggered manually in GitHub Actions for an existing tag. The release version, tag, and the tool version declared in `windows-makeover.ps1` must match.
