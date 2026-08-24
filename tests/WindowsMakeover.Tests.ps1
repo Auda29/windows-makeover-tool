@@ -325,7 +325,7 @@ Describe 'New-WMReleaseAssets' {
         $builderPath = Join-Path $projectRoot 'build\New-WMReleaseAssets.ps1'
         $outputPath = Join-Path $TestDrive 'release'
 
-        $assets = & $builderPath -Version '0.2.0-beta' -OutputDirectory $outputPath
+        $assets = & $builderPath -Version '0.2.1' -OutputDirectory $outputPath
 
         Test-Path -LiteralPath $assets.StandaloneScript -PathType Leaf | Should -BeTrue
         Test-Path -LiteralPath $assets.ZipPackage -PathType Leaf | Should -BeTrue
@@ -352,8 +352,8 @@ Describe 'New-WMReleaseAssets' {
         Test-Path -LiteralPath (Join-Path $expandedPath 'README.md') -PathType Leaf | Should -BeTrue
 
         $checksums = Get-Content -LiteralPath $assets.Checksums -Raw
-        $checksums | Should -Match 'windows-makeover-0\.2\.0-beta\.ps1'
-        $checksums | Should -Match 'windows-makeover-0\.2\.0-beta\.zip'
+        $checksums | Should -Match 'windows-makeover-0\.2\.1\.ps1'
+        $checksums | Should -Match 'windows-makeover-0\.2\.1\.zip'
     }
 }
 

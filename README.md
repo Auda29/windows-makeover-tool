@@ -1,4 +1,4 @@
-# Windows Makeover 0.2.0-beta
+﻿# Windows Makeover 0.2.1
 
 A cautious PowerShell tool for first-line troubleshooting on slow Windows PCs. It is designed for helping family and friends: diagnose transparently first, then offer only clearly scoped actions.
 
@@ -150,16 +150,16 @@ Invoke-Pester .\tests\WindowsMakeover.Tests.ps1 -Output Detailed
 
 ## Releases
 
-A tag such as `v0.2.0-beta` starts the release workflow. It tests the tag on Windows PowerShell 5.1 and PowerShell 7, then publishes three files:
+A tag such as `v0.2.1` starts the release workflow. It tests the tag on Windows PowerShell 5.1 and PowerShell 7, then publishes three files:
 
-- `windows-makeover-0.2.0-beta.ps1` is the standalone script without an external module.
-- `windows-makeover-0.2.0-beta.zip` contains the regular entry script, module, and README.
+- `windows-makeover-0.2.1.ps1` is the standalone script without an external module.
+- `windows-makeover-0.2.1.zip` contains the regular entry script, module, and README.
 - `SHA256SUMS.txt` contains SHA-256 checksums for both downloads.
 
 Compare a download's checksum on Windows with:
 
 ```powershell
-Get-FileHash .\windows-makeover-0.2.0-beta.ps1 -Algorithm SHA256
+Get-FileHash .\windows-makeover-0.2.1.ps1 -Algorithm SHA256
 ```
 
 The workflow can also be triggered manually in GitHub Actions for an existing tag. The release version, tag, and the tool version declared in `windows-makeover.ps1` must match.
