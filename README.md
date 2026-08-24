@@ -40,6 +40,8 @@ Vor der Auswahl misst das Tool Temp-Ordner und Papierkorb erneut. Editierte Empf
 
 Autostart, Updates, Virenschutz, Auslagerungsdatei, Energiesparplan, visuelle Effekte, Clean Boot, Laufwerksoptimierung, Systemreparatur und Wiederherstellung werden nur als **Hinweise** oder manuelle Prüfschritte ausgegeben. Das Tool ändert sie nicht automatisch.
 
+Jeder tatsächlich gestartete Bereinigungsschritt wird zusätzlich im gleichen Ordner wie der verwendete Diagnosebericht als `remediation-audit-YYYYMMDD.jsonl` protokolliert. Jeder Eintrag enthält Zeitstempel, verwendeten Bericht, Aktion, Ergebnis sowie entfernte und fehlgeschlagene Elemente. Ein `-WhatIf`-Lauf erzeugt bewusst keinen Audit-Eintrag, weil dabei keine Bereinigung ausgeführt wird.
+
 ## Voraussetzungen
 
 - Windows 7 SP1, Windows 8/8.1, Windows 10 oder Windows 11

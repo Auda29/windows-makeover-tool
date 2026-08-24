@@ -578,6 +578,50 @@ function Invoke-WMSafeRemediation {
     }
 }
 
+function Get-WMSafePercentage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][double]$Numerator,
+        [Parameter(Mandatory)][double]$Denominator,
+        [ValidateRange(0, 10)][int]$Decimals = 1
+    )
+
+    if ($Denominator -le 0) {
+        return $null
+    }
+
+    return [math]::Round(($Numerator / $Denominator) * 100, $Decimals)
+}
+
+function Save-WMRemediationAuditEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][psobject]$Result,
+        [Parameter(Mandatory)][string]$ReportPath,
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    $directory = Split-Path -Path $Path -Parent
+    if ($directory -and -not (Test-Path -LiteralPath $directory)) {
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+
+    $entry = [ordered]@{
+        AuditSchemaVersion = '1.0'
+        Timestamp          = (Get-Date).ToUniversalTime().ToString('o')
+        ReportPath         = $ReportPath
+        ActionId           = [string](Get-WMFactValue -Facts $Result -Name 'ActionId' -Default '')
+        Status             = [string](Get-WMFactValue -Facts $Result -Name 'Status' -Default 'Unknown')
+        Removed            = Get-WMFactValue -Facts $Result -Name 'Removed' -Default $null
+        Failed             = Get-WMFactValue -Facts $Result -Name 'Failed' -Default $null
+        IsWhatIf           = ([string](Get-WMFactValue -Facts $Result -Name 'Status' -Default '')) -eq 'WhatIf'
+        Error              = Get-WMFactValue -Facts $Result -Name 'Error' -Default $null
+    }
+
+    ($entry | ConvertTo-Json -Compress -Depth 5) | Add-Content -LiteralPath $Path -Encoding utf8
+    return (Resolve-Path -LiteralPath $Path).Path
+}
+
 function Save-WMDiagnosticReport {
     [CmdletBinding()]
     param(
@@ -594,4 +638,4 @@ function Save-WMDiagnosticReport {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
-Export-ModuleMember -Function Get-WMWindowsLifecycle, New-WMDiagnosis, Get-WMCleanupPreview, Get-WMSafeRemediationPlan, Test-WMDiagnosticReport, Invoke-WMSafeRemediation, Save-WMDiagnosticReport
+Export-ModuleMember -Function Get-WMWindowsLifecycle, New-WMDiagnosis, Get-WMCleanupPreview, Get-WMSafeRemediationPlan, Test-WMDiagnosticReport, Invoke-WMSafeRemediation, Get-WMSafePercentage, Save-WMRemediationAuditEntry, Save-WMDiagnosticReport

@@ -46,6 +46,15 @@ function Format-WMByteSize {
     return ('{0:N2} GB' -f ($Bytes / 1GB))
 }
 
+function Format-WMPercentage {
+    param($Value)
+
+    if ($null -eq $Value) {
+        return 'unbekannt'
+    }
+    return ('{0:N1}%' -f [double]$Value)
+}
+
 function Test-WMAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]::new($identity)
@@ -406,7 +415,8 @@ function Get-WMHostFacts {
             Select-Object -First 5 @{ Name = 'Name'; Expression = { $_.ProcessName } }, Id,
                 @{ Name = 'MemoryBytes'; Expression = { [Int64]$_.WorkingSet64 } }
     )
-    $availableMemoryPercent = [math]::Round(($operatingSystem.FreePhysicalMemory / $operatingSystem.TotalVisibleMemorySize) * 100, 1)
+    $availableMemoryPercent = Get-WMSafePercentage -Numerator ([double]$operatingSystem.FreePhysicalMemory) -Denominator ([double]$operatingSystem.TotalVisibleMemorySize)
+    $systemDriveFreePercent = Get-WMSafePercentage -Numerator ([double]$systemDrive.Free) -Denominator ([double]$totalBytes)
 
     [pscustomobject]@{
         ToolVersion              = $script:WMToolVersion
@@ -422,7 +432,7 @@ function Get-WMHostFacts {
         SystemDrive              = $systemDriveId
         SystemDriveTotalBytes    = $totalBytes
         SystemDriveFreeBytes     = [Int64]$systemDrive.Free
-        SystemDriveFreePercent   = [math]::Round(($systemDrive.Free / $totalBytes) * 100, 1)
+        SystemDriveFreePercent   = $systemDriveFreePercent
         SystemDriveDevice        = $systemDriveDevice
         PerformanceSample        = $performanceSample
         TempSizeBytes            = [Int64]$tempPreview.TotalBytes
@@ -461,11 +471,11 @@ function Show-WMReportSummary {
     Write-Host "Gesamtstatus: $($Report.OverallHealth)" -ForegroundColor $statusColor
     Write-Host ''
     Write-Host 'Übersicht' -ForegroundColor Cyan
-    Write-Host ("  Systemlaufwerk: {0} frei von {1} ({2}%)" -f (Format-WMByteSize $facts.SystemDriveFreeBytes), (Format-WMByteSize $facts.SystemDriveTotalBytes), $facts.SystemDriveFreePercent)
+    Write-Host ("  Systemlaufwerk: {0} frei von {1} ({2})" -f (Format-WMByteSize $facts.SystemDriveFreeBytes), (Format-WMByteSize $facts.SystemDriveTotalBytes), (Format-WMPercentage $facts.SystemDriveFreePercent))
     Write-Host ("  Temporäre Dateien: {0} in {1} Dateien" -f (Format-WMByteSize $facts.TempSizeBytes), $facts.TempFileCount)
     Write-Host ("  Papierkorb: {0}" -f (Format-WMByteSize $facts.RecycleBinSizeBytes))
     Write-Host "  Autostart-Einträge: $($facts.StartupApplicationCount)"
-    Write-Host "  Verfügbarer Arbeitsspeicher: $($facts.MemoryAvailableGiB) GiB ($($facts.MemoryAvailablePercent)%)"
+    Write-Host "  Verfügbarer Arbeitsspeicher: $($facts.MemoryAvailableGiB) GiB ($(Format-WMPercentage $facts.MemoryAvailablePercent))"
     Write-Host "  Letzter Neustart: vor $($facts.UptimeDays) Tagen"
 
     if ($facts.Lifecycle.Status -ne 'Unknown') {
@@ -558,11 +568,14 @@ if (-not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
 }
 
 $report = Get-Content -LiteralPath $ReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$resolvedReportPath = (Resolve-Path -LiteralPath $ReportPath).Path
 $currentUserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $reportValidation = Test-WMDiagnosticReport -Report $report -ComputerName $env:COMPUTERNAME -UserSid $currentUserSid -TempPath $env:TEMP
 if (-not $reportValidation.IsValid) {
     throw ("Der Diagnosebericht kann nicht für Bereinigungen verwendet werden: " + ($reportValidation.Reasons -join ' '))
 }
+$auditDirectory = Split-Path -Path $resolvedReportPath -Parent
+$auditPath = Join-Path -Path $auditDirectory -ChildPath ("remediation-audit-{0}.jsonl" -f (Get-Date -Format 'yyyyMMdd'))
 
 # Größen und Schwellenwerte werden direkt vor der Auswahl erneut geprüft.
 # Empfehlungen und Messwerte aus der JSON-Datei steuern keine Löschaktion.
@@ -607,6 +620,16 @@ foreach ($step in $plan) {
             $result = Invoke-WMSafeRemediation -Id $step.Id -Confirm:$false -WhatIf:$WhatIfPreference
         }
         default { throw "Nicht unterstützte Aktion im Plan: $($step.Id)" }
+    }
+
+    if ($result.Status -ne 'WhatIf') {
+        try {
+            Save-WMRemediationAuditEntry -Result $result -ReportPath $resolvedReportPath -Path $auditPath | Out-Null
+            Write-Host "Audit-Protokoll aktualisiert: $auditPath" -ForegroundColor DarkGray
+        }
+        catch {
+            Write-Warning "Bereinigung wurde ausgeführt, aber das Audit-Protokoll konnte nicht geschrieben werden: $($_.Exception.Message)"
+        }
     }
 
     if ($result.Removed -eq -1) {

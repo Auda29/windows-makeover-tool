@@ -268,6 +268,40 @@ Describe 'Invoke-WMSafeRemediation' {
     }
 }
 
+Describe 'Get-WMSafePercentage' {
+    It 'liefert bei einem positiven Nenner den gerundeten Prozentwert' {
+        Get-WMSafePercentage -Numerator 25 -Denominator 200 | Should -Be 12.5
+    }
+
+    It 'liefert bei null oder negativem Nenner keinen irreführenden Wert' {
+        Get-WMSafePercentage -Numerator 25 -Denominator 0 | Should -BeNullOrEmpty
+        Get-WMSafePercentage -Numerator 25 -Denominator (-1) | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Save-WMRemediationAuditEntry' {
+    It 'schreibt eine eigenständige JSONL-Zeile mit dem Ergebnis der Bereinigung' {
+        $path = Join-Path $TestDrive 'remediation-audit.jsonl'
+        $result = [pscustomobject]@{
+            ActionId = 'CleanTempFiles'
+            Status   = 'Completed'
+            Removed  = 12
+            Failed   = 1
+        }
+
+        Save-WMRemediationAuditEntry -Result $result -ReportPath 'C:\Reports\diagnosis.json' -Path $path
+
+        $entry = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json
+        $entry.AuditSchemaVersion | Should -Be '1.0'
+        $entry.ActionId | Should -Be 'CleanTempFiles'
+        $entry.Status | Should -Be 'Completed'
+        $entry.Removed | Should -Be 12
+        $entry.Failed | Should -Be 1
+        $entry.ReportPath | Should -Be 'C:\Reports\diagnosis.json'
+        $entry.IsWhatIf | Should -BeFalse
+    }
+}
+
 Describe 'Save-WMDiagnosticReport' {
     It 'speichert einen maschinenlesbaren Diagnosebericht als JSON' {
         $report = [pscustomobject]@{
