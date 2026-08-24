@@ -4,6 +4,30 @@
     Import-Module $modulePath -Force
 }
 
+Describe 'Get-WMStartupSummary' {
+    It 'separates current-user, shared, and other-user entries and exposes duplicates' {
+        $items = @(
+            [pscustomobject]@{ Name = 'Docker Desktop'; Location = 'Run'; User = 'DOMAIN\Niklas' },
+            [pscustomobject]@{ Name = 'Docker Desktop'; Location = 'Run'; User = 'NT AUTHORITY\SYSTEM' },
+            [pscustomobject]@{ Name = 'OneDrive'; Location = 'Run'; User = 'DOMAIN\Niklas' },
+            [pscustomobject]@{ Name = 'Other App'; Location = 'Run'; User = 'DOMAIN\Other' },
+            [pscustomobject]@{ Name = 'Shared App'; Location = 'Run'; User = 'Public' }
+        )
+
+        $summary = Get-WMStartupSummary -StartupItems $items -CurrentUserName 'DOMAIN\Niklas'
+
+        $summary.TotalEntryCount | Should -Be 5
+        $summary.UniqueNameCount | Should -Be 4
+        $summary.DuplicateEntryCount | Should -Be 1
+        $summary.CurrentUserEntryCount | Should -Be 2
+        $summary.SystemOrSharedEntryCount | Should -Be 2
+        $summary.OtherUserEntryCount | Should -Be 1
+        $summary.DuplicateNames | Should -HaveCount 1
+        $summary.DuplicateNames[0].Name | Should -Be 'Docker Desktop'
+        $summary.DuplicateNames[0].Count | Should -Be 2
+    }
+}
+
 Describe 'New-WMDiagnosis' {
     It 'recommends cleanup for critically low system-drive free space' {
         $facts = [pscustomobject]@{
@@ -15,7 +39,7 @@ Describe 'New-WMDiagnosis' {
 
         $report = New-WMDiagnosis -Facts $facts
 
-        $report.SchemaVersion | Should -Be '1.4'
+        $report.SchemaVersion | Should -Be '1.5'
         $report.OverallHealth | Should -Be 'Critical'
         $report.Recommendations.Id | Should -Contain 'CleanTempFiles'
         $report.Recommendations.Id | Should -Contain 'FreeDiskSpace'
@@ -33,6 +57,24 @@ Describe 'New-WMDiagnosis' {
 
         $report.Recommendations.Id | Should -Contain 'ReviewStartupApps'
         $report.Recommendations.Id | Should -Contain 'RestartForPendingUpdates'
+    }
+
+    It 'bases startup guidance on current-user entries when a startup summary is available' {
+        $facts = [pscustomobject]@{
+            SystemDriveFreePercent  = 55
+            TempSizeBytes           = 10MB
+            StartupApplicationCount = 22
+            StartupSummary          = [pscustomobject]@{
+                TotalEntryCount = 22
+                CurrentUserEntryCount = 3
+                UniqueNameCount = 20
+                DuplicateEntryCount = 2
+            }
+        }
+
+        $report = New-WMDiagnosis -Facts $facts
+
+        $report.Recommendations.Id | Should -Not -Contain 'ReviewStartupApps'
     }
 
     It 'detects typical CPU, disk, memory, and security bottlenecks' {
@@ -113,7 +155,7 @@ Describe 'New-WMDiagnosis' {
 
         $report = New-WMDiagnosis -Facts $facts
 
-        $report.SchemaVersion | Should -Be '1.4'
+        $report.SchemaVersion | Should -Be '1.5'
         $report.Recommendations.Id | Should -Contain 'ReviewLargeUserFolders'
         $report.Recommendations.Id | Should -Contain 'ReviewBrowserCaches'
         $report.Recommendations.Id | Should -Contain 'InstallPendingWindowsUpdates'
@@ -135,7 +177,7 @@ Describe 'Get-WMWindowsLifecycle' {
 Describe 'Get-WMSafeRemediationPlan' {
     It 'marks temp cleanup as an individually confirmed action with a size estimate' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.4'
+            SchemaVersion = '1.5'
             Facts = [pscustomobject]@{ TempSizeBytes = 2GB; RecycleBinSizeBytes = 0 }
             Recommendations = @(
                 [pscustomobject]@{ Id = 'CleanTempFiles' }
@@ -154,7 +196,7 @@ Describe 'Get-WMSafeRemediationPlan' {
 
     It 'offers the Recycle Bin only as a confirmed low-risk action' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.4'
+            SchemaVersion = '1.5'
             Facts = [pscustomobject]@{ TempSizeBytes = 0; RecycleBinSizeBytes = 3GB }
             Recommendations = @(
                 [pscustomobject]@{ Id = 'CleanRecycleBin' }
@@ -177,7 +219,7 @@ Describe 'Get-WMSafeRemediationPlan' {
 
     It 'ignores injected action IDs below the size threshold' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.4'
+            SchemaVersion = '1.5'
             Facts = [pscustomobject]@{ TempSizeBytes = 0; RecycleBinSizeBytes = 0 }
             Recommendations = @(
                 [pscustomobject]@{ Id = 'CleanRecycleBin' }
@@ -191,7 +233,7 @@ Describe 'Get-WMSafeRemediationPlan' {
 Describe 'Test-WMDiagnosticReport' {
     It 'accepts a recent report from the same PC' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.4'
+            SchemaVersion = '1.5'
             GeneratedAt = [DateTimeOffset]::UtcNow.ToString('o')
             Facts = [pscustomobject]@{
                 ComputerName = 'FAMILY-PC'
@@ -207,7 +249,7 @@ Describe 'Test-WMDiagnosticReport' {
 
     It 'rejects an old or foreign report' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.4'
+            SchemaVersion = '1.5'
             GeneratedAt = [DateTimeOffset]::UtcNow.AddDays(-31).ToString('o')
             Facts = [pscustomobject]@{
                 ComputerName = 'OTHER-PC'
@@ -225,7 +267,7 @@ Describe 'Test-WMDiagnosticReport' {
 
     It 'rejects missing user binding and a future timestamp' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.4'
+            SchemaVersion = '1.5'
             GeneratedAt = [DateTimeOffset]::UtcNow.AddHours(1).ToString('o')
             Facts = [pscustomobject]@{
                 TempSizeBytes = 2GB
@@ -243,7 +285,7 @@ Describe 'Test-WMDiagnosticReport' {
 
     It 'rejects reports from another Windows user or temp scope' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.4'
+            SchemaVersion = '1.5'
             GeneratedAt = [DateTimeOffset]::UtcNow.ToString('o')
             Facts = [pscustomobject]@{
                 ComputerName = 'FAMILY-PC'
@@ -356,6 +398,7 @@ Describe 'Get-WMDirectoryUsage' {
         $usage = Get-WMDirectoryUsage -Path $root -Name 'Test'
 
         $usage.ProbeStatus | Should -Be 'Available'
+        $usage.Coverage | Should -Be 'Complete'
         $usage.TotalBytes | Should -Be 8
         $usage.FileCount | Should -Be 2
         Test-Path -LiteralPath (Join-Path $nested 'two.bin') | Should -BeTrue
@@ -376,7 +419,23 @@ Describe 'Get-WMDirectoryUsage' {
         $usage = Get-WMDirectoryUsage -Path $root -Name 'Timed' -DeadlineUtc ([DateTimeOffset]::UtcNow.AddSeconds(-1))
 
         $usage.ProbeStatus | Should -Be 'Partial'
+        $usage.Coverage | Should -Be 'Partial'
         $usage.TimedOut | Should -BeTrue
+    }
+
+    It 'labels measurements that intentionally skip reparse targets' -Skip:(-not $IsLinux) {
+        $root = Join-Path $TestDrive 'reparse-root'
+        $target = Join-Path $TestDrive 'target'
+        New-Item -ItemType Directory -Path $root,$target -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $target 'outside.bin') -Value '12345' -NoNewline
+        New-Item -ItemType SymbolicLink -Path (Join-Path $root 'linked') -Target $target | Out-Null
+
+        $usage = Get-WMDirectoryUsage -Path $root -Name 'Reparse'
+
+        $usage.ProbeStatus | Should -Be 'Available'
+        $usage.Coverage | Should -Be 'CompleteWithoutReparseTargets'
+        $usage.SkippedReparsePoints | Should -Be 1
+        $usage.TotalBytes | Should -Be 0
     }
 }
 
@@ -397,10 +456,25 @@ Describe 'Get-WMKnownUserFolderUsage' {
         }) -Top 2
 
         $result.ProbeStatus | Should -Be 'Available'
+        $result.Coverage | Should -Be 'Complete'
         $result.Folders | Should -HaveCount 2
         $result.Folders[0].Name | Should -Be 'Downloads'
         $result.Folders[0].TotalBytes | Should -Be 30
         $result.Folders[1].Name | Should -Be 'Documents'
+    }
+
+    It 'marks aggregate coverage partial when a requested known folder is unavailable' {
+        $documents = Join-Path $TestDrive 'Documents-present'
+        New-Item -ItemType Directory -Path $documents -Force | Out-Null
+
+        $result = Get-WMKnownUserFolderUsage -Folders ([ordered]@{
+            Documents = $documents
+            Downloads = (Join-Path $TestDrive 'Downloads-missing')
+        })
+
+        $result.ProbeStatus | Should -Be 'Partial'
+        $result.Coverage | Should -Be 'Partial'
+        $result.UnavailableCount | Should -Be 1
     }
 }
 
@@ -505,7 +579,7 @@ Describe 'Save-WMRemediationAuditEntry' {
 Describe 'Save-WMDiagnosticReport' {
     It 'saves a machine-readable diagnostic report as JSON' {
         $report = [pscustomobject]@{
-            SchemaVersion = '1.4'
+            SchemaVersion = '1.5'
             OverallHealth = 'Healthy'
             Recommendations = @()
         }
@@ -514,7 +588,7 @@ Describe 'Save-WMDiagnosticReport' {
         Save-WMDiagnosticReport -Report $report -Path $path
 
         $saved = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-        $saved.SchemaVersion | Should -Be '1.4'
+        $saved.SchemaVersion | Should -Be '1.5'
         $saved.OverallHealth | Should -Be 'Healthy'
     }
 }
@@ -525,7 +599,7 @@ Describe 'New-WMReleaseAssets' {
         $builderPath = Join-Path $projectRoot 'build\New-WMReleaseAssets.ps1'
         $outputPath = Join-Path $TestDrive 'release'
 
-        $assets = & $builderPath -Version '0.3.0' -OutputDirectory $outputPath
+        $assets = & $builderPath -Version '0.3.1-dev' -OutputDirectory $outputPath
 
         Test-Path -LiteralPath $assets.StandaloneScript -PathType Leaf | Should -BeTrue
         Test-Path -LiteralPath $assets.ZipPackage -PathType Leaf | Should -BeTrue
@@ -552,8 +626,8 @@ Describe 'New-WMReleaseAssets' {
         Test-Path -LiteralPath (Join-Path $expandedPath 'README.md') -PathType Leaf | Should -BeTrue
 
         $checksums = Get-Content -LiteralPath $assets.Checksums -Raw
-        $checksums | Should -Match 'windows-makeover-0\.3\.0\.ps1'
-        $checksums | Should -Match 'windows-makeover-0\.3\.0\.zip'
+        $checksums | Should -Match 'windows-makeover-0\.3\.1-dev\.ps1'
+        $checksums | Should -Match 'windows-makeover-0\.3\.1-dev\.zip'
     }
 }
 
@@ -584,6 +658,17 @@ Describe 'windows-makeover entry point' {
         $scriptContent | Should -Match '\$reportDirectory = Get-WMDefaultReportDirectory'
         $scriptContent | Should -Match 'Run context: \$\(Get-WMRunContextMessage'
         $scriptContent | Should -Not -Match 'Gesamtstatus|Diagnosebericht|pro Sekunde'
+    }
+
+    It 'prints precise startup counts and uses one controlled table writer' {
+        $projectRoot = Split-Path -Path $PSScriptRoot -Parent
+        $scriptContent = Get-Content -LiteralPath (Join-Path $projectRoot 'windows-makeover.ps1') -Raw
+
+        $scriptContent | Should -Match 'Startup entries returned by Windows:'
+        $scriptContent | Should -Match 'current user:'
+        $scriptContent | Should -Match 'unique names:'
+        $scriptContent | Should -Match 'function Write-WMTable'
+        ([regex]::Matches($scriptContent, '\|\s*Format-Table')).Count | Should -Be 1
     }
 
     It 'uses explicit process exit codes for validation and action errors' {

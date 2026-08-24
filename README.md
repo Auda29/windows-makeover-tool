@@ -1,4 +1,4 @@
-﻿# Windows Makeover 0.3.0
+﻿# Windows Makeover 0.3.1-dev
 
 A cautious PowerShell tool for first-line troubleshooting on slow Windows PCs. It is designed for helping family and friends: diagnose transparently first, then offer only clearly scoped actions.
 
@@ -14,7 +14,7 @@ A cautious PowerShell tool for first-line troubleshooting on slow Windows PCs. I
 - free space on the system drive
 - size and file count of the current user's temp folder
 - size of the current user's Recycle Bin
-- startup-app count and details
+- startup-app entries grouped into current-user, system/shared, and other-user contexts, with unique-name and duplicate counts
 - pending Windows restart and time since the last restart
 - available memory and the five currently largest memory consumers
 - a five-second CPU, system-drive, and commit-utilization sample by default, including notable CPU and I/O processes
@@ -74,7 +74,7 @@ You can lengthen the performance sample for a smoother average, skip it complete
 .\windows-makeover.ps1 -Mode Diagnosis -StorageTimeoutSeconds 90
 ```
 
-The performance sample accepts 0 to 60 seconds. The Windows Update probe accepts 5 to 120 seconds and returns `TimedOut` rather than blocking the whole diagnosis. Known-folder and browser-cache scans share one bounded budget of 5 to 300 seconds (45 seconds by default); when it expires, accumulated values remain in the report with `ProbeStatus = Partial`. A short performance sample is only a snapshot and does not replace a longer performance trace for intermittent hangs.
+The performance sample accepts 0 to 60 seconds. The Windows Update probe accepts 5 to 120 seconds and returns `TimedOut` rather than blocking the whole diagnosis. Known-folder and browser-cache scans share one bounded budget of 5 to 300 seconds (45 seconds by default); when it expires, accumulated values remain in the report with `ProbeStatus = Partial`. Folder measurements also report `Coverage`: `Complete`, `CompleteWithoutReparseTargets`, `Partial`, or `Unavailable`. Reparse targets are intentionally excluded to avoid loops and double counting. A short performance sample is only a snapshot and does not replace a longer performance trace for intermittent hangs.
 
 4. Start the guided cleanup with the report you just created:
 

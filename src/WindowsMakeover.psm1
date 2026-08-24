@@ -1,6 +1,6 @@
 ﻿Set-StrictMode -Version Latest
 
-$script:WMReportSchemaVersion = '1.4'
+$script:WMReportSchemaVersion = '1.5'
 
 function Get-WMFactValue {
     [CmdletBinding()]
@@ -261,6 +261,7 @@ function Get-WMDirectoryUsage {
             Name                 = $Name
             Path                 = $Path
             ProbeStatus          = 'Unavailable'
+            Coverage             = 'Unavailable'
             TotalBytes           = [int64]0
             FileCount            = 0
             SkippedReparsePoints = 0
@@ -274,14 +275,14 @@ function Get-WMDirectoryUsage {
     }
     catch {
         return [pscustomobject]@{
-            Name = $Name; Path = $Path; ProbeStatus = 'Unavailable'; TotalBytes = [int64]0
+            Name = $Name; Path = $Path; ProbeStatus = 'Unavailable'; Coverage = 'Unavailable'; TotalBytes = [int64]0
             FileCount = 0; SkippedReparsePoints = 0; ErrorCount = 1; TimedOut = $false; Error = $_.Exception.Message
         }
     }
     $rootIsReparsePoint = ([int]$rootItem.Attributes -band [int][System.IO.FileAttributes]::ReparsePoint) -ne 0
     if ($rootIsReparsePoint) {
         return [pscustomobject]@{
-            Name = $Name; Path = $rootItem.FullName; ProbeStatus = 'Partial'; TotalBytes = [int64]0
+            Name = $Name; Path = $rootItem.FullName; ProbeStatus = 'Partial'; Coverage = 'CompleteWithoutReparseTargets'; TotalBytes = [int64]0
             FileCount = 0; SkippedReparsePoints = 1; ErrorCount = 0; TimedOut = $false
         }
     }
@@ -335,10 +336,21 @@ function Get-WMDirectoryUsage {
         }
     }
 
+    $coverage = if ($errorCount -gt 0 -or $timedOut) {
+        'Partial'
+    }
+    elseif ($skippedReparsePoints -gt 0) {
+        'CompleteWithoutReparseTargets'
+    }
+    else {
+        'Complete'
+    }
+
     [pscustomobject]@{
         Name                 = $Name
         Path                 = $resolvedPath
         ProbeStatus          = if ($errorCount -eq 0 -and -not $timedOut) { 'Available' } else { 'Partial' }
+        Coverage             = $coverage
         TotalBytes           = $totalBytes
         FileCount            = $fileCount
         SkippedReparsePoints = $skippedReparsePoints
@@ -370,13 +382,30 @@ function Get-WMKnownUserFolderUsage {
     $orderedFolders = @($measurements | Sort-Object -Property TotalBytes -Descending | Select-Object -First $Top)
     $errorCount = [int](($measurements | Measure-Object -Property ErrorCount -Sum).Sum)
     $partialCount = @($measurements | Where-Object { $_.ProbeStatus -eq 'Partial' }).Count
+    $skippedReparsePoints = [int](($measurements | Measure-Object -Property SkippedReparsePoints -Sum).Sum)
+    $timedOutCount = @($measurements | Where-Object { $_.TimedOut }).Count
+    $coverage = if ($measurements.Count -eq 0) {
+        'Unavailable'
+    }
+    elseif ($partialCount -gt 0 -or $errorCount -gt 0 -or $timedOutCount -gt 0 -or $unavailableCount -gt 0) {
+        'Partial'
+    }
+    elseif ($skippedReparsePoints -gt 0) {
+        'CompleteWithoutReparseTargets'
+    }
+    else {
+        'Complete'
+    }
     [pscustomobject]@{
-        ProbeStatus     = if ($measurements.Count -eq 0) { 'Unavailable' } elseif ($errorCount -gt 0 -or $unavailableCount -gt 0 -or $partialCount -gt 0) { 'Partial' } else { 'Available' }
-        Folders         = $orderedFolders
-        MeasuredCount   = $measurements.Count
-        UnavailableCount = $unavailableCount
-        TotalBytes      = [int64](($measurements | Measure-Object -Property TotalBytes -Sum).Sum)
-        ErrorCount      = $errorCount
+        ProbeStatus          = if ($measurements.Count -eq 0) { 'Unavailable' } elseif ($errorCount -gt 0 -or $unavailableCount -gt 0 -or $partialCount -gt 0) { 'Partial' } else { 'Available' }
+        Coverage             = $coverage
+        Folders              = $orderedFolders
+        MeasuredCount        = $measurements.Count
+        UnavailableCount     = $unavailableCount
+        TotalBytes           = [int64](($measurements | Measure-Object -Property TotalBytes -Sum).Sum)
+        ErrorCount           = $errorCount
+        SkippedReparsePoints = $skippedReparsePoints
+        TimedOutCount        = $timedOutCount
     }
 }
 
@@ -513,6 +542,66 @@ function ConvertTo-WMPendingUpdateSummary {
     }
 }
 
+function Get-WMStartupSummary {
+    [CmdletBinding()]
+    param(
+        [object[]]$StartupItems = @(),
+        [Parameter(Mandatory)][string]$CurrentUserName
+    )
+
+    $entries = [System.Collections.Generic.List[object]]::new()
+    foreach ($startupItem in @($StartupItems)) {
+        $name = [string](Get-WMFactValue -Facts $startupItem -Name 'Name' -Default '')
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = '(unnamed)' }
+        $user = [string](Get-WMFactValue -Facts $startupItem -Name 'User' -Default '')
+        $normalizedUser = $user.Trim().ToUpperInvariant()
+
+        $context = if (-not [string]::IsNullOrWhiteSpace($CurrentUserName) -and
+            [string]::Equals($user, $CurrentUserName, [System.StringComparison]::OrdinalIgnoreCase)) {
+            'CurrentUser'
+        }
+        elseif ($normalizedUser -in @('PUBLIC', '.DEFAULT', 'SYSTEM', 'LOCAL SERVICE', 'NETWORK SERVICE') -or
+            $normalizedUser -match '(?:^|\\)(?:SYSTEM|LOCAL SERVICE|NETWORK SERVICE)$') {
+            'SystemOrShared'
+        }
+        else {
+            'OtherUser'
+        }
+
+        $entries.Add([pscustomobject]@{
+            Name     = $name
+            Location = [string](Get-WMFactValue -Facts $startupItem -Name 'Location' -Default '')
+            User     = $user
+            Context  = $context
+        })
+    }
+
+    $nameGroups = @($entries | Group-Object -Property Name)
+    $duplicates = @(
+        $nameGroups |
+            Where-Object { $_.Count -gt 1 } |
+            Sort-Object -Property @{ Expression = 'Count'; Descending = $true }, @{ Expression = 'Name'; Descending = $false } |
+            ForEach-Object {
+                [pscustomobject]@{
+                    Name  = $_.Name
+                    Count = $_.Count
+                    Users = @($_.Group.User | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+                }
+            }
+    )
+
+    [pscustomobject]@{
+        TotalEntryCount          = $entries.Count
+        UniqueNameCount          = $nameGroups.Count
+        DuplicateEntryCount      = $entries.Count - $nameGroups.Count
+        CurrentUserEntryCount    = @($entries | Where-Object Context -eq 'CurrentUser').Count
+        SystemOrSharedEntryCount = @($entries | Where-Object Context -eq 'SystemOrShared').Count
+        OtherUserEntryCount      = @($entries | Where-Object Context -eq 'OtherUser').Count
+        DuplicateNames           = $duplicates
+        Entries                  = $entries.ToArray()
+    }
+}
+
 function New-WMDiagnosis {
     [CmdletBinding()]
     param(
@@ -524,6 +613,13 @@ function New-WMDiagnosis {
     $tempSize = [int64](Get-WMFactValue -Facts $Facts -Name 'TempSizeBytes' -Default 0)
     $recycleBinSize = [int64](Get-WMFactValue -Facts $Facts -Name 'RecycleBinSizeBytes' -Default 0)
     $startupCount = [int](Get-WMFactValue -Facts $Facts -Name 'StartupApplicationCount' -Default 0)
+    $startupSummary = Get-WMFactValue -Facts $Facts -Name 'StartupSummary' -Default $null
+    $startupGuidanceCount = if ($null -ne $startupSummary) {
+        [int](Get-WMFactValue -Facts $startupSummary -Name 'CurrentUserEntryCount' -Default 0)
+    }
+    else {
+        $startupCount
+    }
     $uptimeDays = [double](Get-WMFactValue -Facts $Facts -Name 'UptimeDays' -Default 0)
     $restartPending = [bool](Get-WMFactValue -Facts $Facts -Name 'RebootPending' -Default (Get-WMFactValue -Facts $Facts -Name 'UpdatesPending' -Default $false))
     $lifecycle = Get-WMFactValue -Facts $Facts -Name 'Lifecycle' -Default ([pscustomobject]@{})
@@ -552,9 +648,17 @@ function New-WMDiagnosis {
         $recommendations.Add((New-WMRecommendation -Id 'CleanRecycleBin' -Severity 'Low' -Title 'Empty Recycle Bin' -Description 'The Recycle Bin uses a large amount of space. It is emptied only after separate confirmation.' -ActionType 'Remediation'))
     }
 
-    if ($startupCount -ge 8) {
+    if ($startupGuidanceCount -ge 8) {
         $startupLocation = if ([string](Get-WMFactValue -Facts $Facts -Name 'OperatingSystemVersion' -Default '') -like '6.1*') { 'msconfig and startup folders' } else { 'Task Manager > Startup apps' }
-        $recommendations.Add((New-WMRecommendation -Id 'ReviewStartupApps' -Severity 'Medium' -Title 'Review startup apps' -Description "$startupCount startup entries were found. Open $startupLocation and review entries one at a time." -ActionType 'Guidance'))
+        $startupDescription = if ($null -ne $startupSummary) {
+            $totalEntries = [int](Get-WMFactValue -Facts $startupSummary -Name 'TotalEntryCount' -Default $startupCount)
+            $duplicateEntries = [int](Get-WMFactValue -Facts $startupSummary -Name 'DuplicateEntryCount' -Default 0)
+            "$startupGuidanceCount current-user startup entries were found ($totalEntries entries returned by Windows, including $duplicateEntries duplicate entries). Open $startupLocation and review current-user entries one at a time."
+        }
+        else {
+            "$startupGuidanceCount startup entries were found. Open $startupLocation and review entries one at a time."
+        }
+        $recommendations.Add((New-WMRecommendation -Id 'ReviewStartupApps' -Severity 'Medium' -Title 'Review startup apps' -Description $startupDescription -ActionType 'Guidance'))
     }
 
     if ($restartPending) {
@@ -1066,4 +1170,4 @@ function Save-WMDiagnosticReport {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
-Export-ModuleMember -Function Get-WMWindowsLifecycle, New-WMDiagnosis, Get-WMDirectoryUsage, Get-WMKnownUserFolderUsage, Get-WMBrowserCacheUsage, ConvertTo-WMPendingUpdateSummary, Get-WMCleanupPreview, Get-WMSafeRemediationPlan, Test-WMDiagnosticReport, Get-WMLocalFixedDriveLetters, Invoke-WMSafeRemediation, Get-WMSafePercentage, Get-WMProcessExitCode, Get-WMDefaultReportDirectory, Get-WMRunContextMessage, Save-WMRemediationAuditEntry, Save-WMDiagnosticReport
+Export-ModuleMember -Function Get-WMWindowsLifecycle, Get-WMStartupSummary, New-WMDiagnosis, Get-WMDirectoryUsage, Get-WMKnownUserFolderUsage, Get-WMBrowserCacheUsage, ConvertTo-WMPendingUpdateSummary, Get-WMCleanupPreview, Get-WMSafeRemediationPlan, Test-WMDiagnosticReport, Get-WMLocalFixedDriveLetters, Invoke-WMSafeRemediation, Get-WMSafePercentage, Get-WMProcessExitCode, Get-WMDefaultReportDirectory, Get-WMRunContextMessage, Save-WMRemediationAuditEntry, Save-WMDiagnosticReport

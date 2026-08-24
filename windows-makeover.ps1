@@ -32,7 +32,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:WMToolVersion = '0.3.0'
+$script:WMToolVersion = '0.3.1-dev'
 
 $modulePath = Join-Path $PSScriptRoot 'src\WindowsMakeover.psm1'
 Import-Module $modulePath -Force
@@ -59,6 +59,18 @@ function Format-WMPercentage {
         return 'unknown'
     }
     return ('{0:N1}%' -f [double]$Value)
+}
+
+function Write-WMTable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object[]]$InputObject,
+        [Parameter(Mandatory)][object[]]$Property
+    )
+
+    if (@($InputObject).Count -eq 0) { return }
+    $tableText = $InputObject | Format-Table -Property $Property -AutoSize | Out-String -Width 240
+    Write-Host ($tableText.Trim())
 }
 
 function Test-WMAdministrator {
@@ -507,6 +519,8 @@ function Get-WMHostFacts {
     $totalBytes = [Int64]($systemDrive.Used + $systemDrive.Free)
     $tempPreview = Get-WMCleanupPreview -Path $env:TEMP
     $startupItems = @(Get-CimInstance -ClassName Win32_StartupCommand -ErrorAction SilentlyContinue)
+    $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $startupSummary = Get-WMStartupSummary -StartupItems $startupItems -CurrentUserName $currentIdentity.Name
     $currentVersion = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
     $editionId = if ($null -ne $currentVersion) { [string]$currentVersion.EditionID } else { '' }
     $displayVersion = if ($null -ne $currentVersion -and $currentVersion.PSObject.Properties['DisplayVersion']) { [string]$currentVersion.DisplayVersion } else { '' }
@@ -540,7 +554,7 @@ function Get-WMHostFacts {
     [pscustomobject]@{
         ToolVersion              = $script:WMToolVersion
         ComputerName             = $env:COMPUTERNAME
-        UserSid                  = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        UserSid                  = $currentIdentity.User.Value
         CollectedAt              = (Get-Date).ToUniversalTime().ToString('o')
         IsAdministrator          = Test-WMAdministrator
         OperatingSystem          = $operatingSystem.Caption
@@ -558,8 +572,9 @@ function Get-WMHostFacts {
         TempFileCount            = [Int]$tempPreview.FileCount
         TempPath                 = $tempPreview.Path
         RecycleBinSizeBytes      = Get-WMRecycleBinSize
-        StartupApplicationCount  = $startupItems.Count
-        StartupApplications      = @($startupItems | Select-Object Name, Location, User)
+        StartupApplicationCount  = $startupSummary.TotalEntryCount
+        StartupSummary           = $startupSummary
+        StartupApplications      = $startupSummary.Entries
         RebootPending            = Get-WMPendingReboot
         PageFile                 = Get-WMPageFileInfo -ComputerSystem $computerSystem
         Antivirus                = Get-WMAntivirusInfo
@@ -597,7 +612,9 @@ function Show-WMReportSummary {
     Write-Host ("  System drive: {0} free of {1} ({2})" -f (Format-WMByteSize $facts.SystemDriveFreeBytes), (Format-WMByteSize $facts.SystemDriveTotalBytes), (Format-WMPercentage $facts.SystemDriveFreePercent))
     Write-Host ("  Temporary files: {0} in {1} files" -f (Format-WMByteSize $facts.TempSizeBytes), $facts.TempFileCount)
     Write-Host ("  Recycle Bin: {0}" -f (Format-WMByteSize $facts.RecycleBinSizeBytes))
-    Write-Host "  Startup entries: $($facts.StartupApplicationCount)"
+    $startupSummary = $facts.StartupSummary
+    Write-Host "  Startup entries returned by Windows: $($startupSummary.TotalEntryCount) (current user: $($startupSummary.CurrentUserEntryCount), unique names: $($startupSummary.UniqueNameCount), duplicate entries: $($startupSummary.DuplicateEntryCount))"
+    Write-Host "  Startup contexts: system/shared $($startupSummary.SystemOrSharedEntryCount), other users $($startupSummary.OtherUserEntryCount)"
     Write-Host "  Available memory: $($facts.MemoryAvailableGiB) GiB ($(Format-WMPercentage $facts.MemoryAvailablePercent))"
     Write-Host "  Last restart: $($facts.UptimeDays) days ago"
 
@@ -633,6 +650,9 @@ function Show-WMReportSummary {
     elseif ($facts.PendingUpdates.ProbeStatus -eq 'TimedOut') {
         Write-Host "  Pending Windows updates: probe timed out after $($facts.PendingUpdates.TimeoutSeconds) seconds"
     }
+    if ($facts.UserFolderUsage.ProbeStatus -in @('Available', 'Partial')) {
+        Write-Host "  Known-folder coverage: $($facts.UserFolderUsage.Coverage) (reparse targets skipped: $($facts.UserFolderUsage.SkippedReparsePoints), errors: $($facts.UserFolderUsage.ErrorCount))"
+    }
     if ($facts.BrowserCacheUsage.ProbeStatus -in @('Available', 'Partial')) {
         Write-Host "  Browser caches: $(Format-WMByteSize $facts.BrowserCacheUsage.TotalBytes)"
     }
@@ -650,43 +670,55 @@ function Show-WMReportSummary {
         }
     }
 
+    if (@($startupSummary.DuplicateNames).Count -gt 0) {
+        Write-Host ''
+        Write-Host 'Duplicate startup names across Windows contexts' -ForegroundColor Cyan
+        Write-WMTable -InputObject @($startupSummary.DuplicateNames) -Property @(
+            'Name', 'Count', @{ Name = 'Users'; Expression = { @($_.Users) -join ', ' } }
+        )
+    }
+
     if (@($facts.UserFolderUsage.Folders).Count -gt 0) {
         Write-Host ''
         Write-Host 'Largest known user folders' -ForegroundColor Cyan
-        $facts.UserFolderUsage.Folders |
-            Select-Object Name, @{ Name = 'Size'; Expression = { Format-WMByteSize $_.TotalBytes } }, FileCount, ProbeStatus |
-            Format-Table -AutoSize
+        Write-WMTable -InputObject @($facts.UserFolderUsage.Folders) -Property @(
+            'Name',
+            @{ Name = 'Size'; Expression = { Format-WMByteSize $_.TotalBytes } },
+            'FileCount', 'ProbeStatus', 'Coverage'
+        )
     }
 
     $measuredBrowserCaches = @($facts.BrowserCacheUsage.Browsers | Where-Object { $_.ProbeStatus -ne 'Unavailable' })
     if ($measuredBrowserCaches.Count -gt 0) {
         Write-Host ''
         Write-Host 'Browser cache usage' -ForegroundColor Cyan
-        $measuredBrowserCaches |
-            Select-Object Name, @{ Name = 'Size'; Expression = { Format-WMByteSize $_.TotalBytes } }, FileCount, ProfileCount, ProbeStatus |
-            Format-Table -AutoSize
+        Write-WMTable -InputObject $measuredBrowserCaches -Property @(
+            'Name',
+            @{ Name = 'Size'; Expression = { Format-WMByteSize $_.TotalBytes } },
+            'FileCount', 'ProfileCount', 'ProbeStatus'
+        )
     }
 
     if (@($facts.PerformanceSample.TopCpuProcesses).Count -gt 0) {
         Write-Host ''
         Write-Host 'CPU processes at the end of the short sample' -ForegroundColor Cyan
-        $facts.PerformanceSample.TopCpuProcesses | Format-Table Name, Id, CpuPercent -AutoSize
+        Write-WMTable -InputObject @($facts.PerformanceSample.TopCpuProcesses) -Property @('Name', 'Id', 'CpuPercent')
     }
 
     if (@($facts.PerformanceSample.TopIoProcesses).Count -gt 0) {
         Write-Host ''
         Write-Host 'I/O processes at the end of the short sample' -ForegroundColor Cyan
-        $facts.PerformanceSample.TopIoProcesses |
-            Select-Object Name, Id, @{ Name = 'I/O per second'; Expression = { Format-WMByteSize $_.IoBytesPerSecond } } |
-            Format-Table -AutoSize
+        Write-WMTable -InputObject @($facts.PerformanceSample.TopIoProcesses) -Property @(
+            'Name', 'Id', @{ Name = 'I/O per second'; Expression = { Format-WMByteSize $_.IoBytesPerSecond } }
+        )
     }
 
     if (@($facts.TopMemoryProcesses).Count -gt 0) {
         Write-Host ''
         Write-Host 'Largest currently visible memory usage' -ForegroundColor Cyan
-        $facts.TopMemoryProcesses |
-            Select-Object Name, Id, @{ Name = 'Memory'; Expression = { Format-WMByteSize $_.MemoryBytes } } |
-            Format-Table -AutoSize
+        Write-WMTable -InputObject @($facts.TopMemoryProcesses) -Property @(
+            'Name', 'Id', @{ Name = 'Memory'; Expression = { Format-WMByteSize $_.MemoryBytes } }
+        )
     }
 
     Write-Host ''
@@ -764,9 +796,9 @@ if ($plan.Count -eq 0) {
 
 Write-Host ''
 Write-Host 'The following low-risk actions are available:' -ForegroundColor Cyan
-$plan |
-    Select-Object Id, Risk, @{ Name = 'Estimated space recovery'; Expression = { Format-WMByteSize $_.EstimatedBytes } }, Scope |
-    Format-Table -AutoSize
+Write-WMTable -InputObject $plan -Property @(
+    'Id', 'Risk', @{ Name = 'Estimated space recovery'; Expression = { Format-WMByteSize $_.EstimatedBytes } }, 'Scope'
+)
 
 $remediationResults = [System.Collections.Generic.List[object]]::new()
 foreach ($step in $plan) {
