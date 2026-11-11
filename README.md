@@ -1,5 +1,7 @@
 ﻿# Windows Makeover 0.3.1
 
+[Website (DE)](https://auda29.github.io/windows-makeover-tool/) · [Website (EN)](https://auda29.github.io/windows-makeover-tool/en.html)
+
 A cautious PowerShell tool for first-line troubleshooting on slow Windows PCs. It is designed for helping family and friends: diagnose transparently first, then offer only clearly scoped actions.
 
 > **Beta status:** Diagnosis, JSON reports, and the guided cleanup workflow are implemented and automatically tested. Before broad use, test the beta on several real Windows 7 through Windows 11 PCs. It does not replace backups or professional diagnosis of hardware faults, malware, or drive failures.
